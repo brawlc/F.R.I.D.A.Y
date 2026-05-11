@@ -16,6 +16,8 @@ const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
 const canUseDesktopBridge = process.platform === 'win32' && !process.env.RENDER;
 const gemini = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+const googleSearchApiKey = process.env.GOOGLE_SEARCH_API_KEY || '';
+const googleSearchEngineId = process.env.GOOGLE_SEARCH_ENGINE_ID || '';
 
 const openTargets = {
   instagram: 'https://www.instagram.com/',
@@ -146,12 +148,25 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
+    const webContext = await getWebContextForPrompt(text);
+    const promptText = webContext
+      ? [
+          text,
+          '',
+          'WEB SEARCH CONTEXT',
+          'Use these Google Custom Search results when they help answer the user. Prefer the listed source URLs for current facts. If the results are weak or unrelated, say so briefly instead of pretending certainty.',
+          webContext,
+          '',
+          'When using web results, include a short Sources section with the URLs you relied on.'
+        ].join('\n')
+      : text;
+
     const response = await gemini.models.generateContent({
       model: 'gemini-3-flash-preview',
       config: systemInstruction ? { systemInstruction } : undefined,
       contents: [{
         role: 'user',
-        parts: [{ text }],
+        parts: [{ text: promptText }],
       }],
     });
 
@@ -176,6 +191,54 @@ app.post('/api/chat', async (req, res) => {
     });
   }
 });
+
+function shouldUseWebSearch(text) {
+  const normalized = text.toLowerCase();
+  return /\b(search|google|research|look up|lookup|find out|latest|today|current|currently|recent|news|price|weather|score|schedule|source|sources|citation|cite|verify)\b/.test(normalized)
+    || /\b(who is|what is|when is|where is|how much|which)\b/.test(normalized);
+}
+
+function formatSearchResult(item, index) {
+  const title = String(item?.title || 'Untitled result').trim();
+  const link = String(item?.link || '').trim();
+  const snippet = String(item?.snippet || '').replace(/\s+/g, ' ').trim();
+  return `${index + 1}. ${title}\nURL: ${link}\nSummary: ${snippet}`;
+}
+
+async function getWebContextForPrompt(text) {
+  if (!shouldUseWebSearch(text)) return '';
+  if (!googleSearchApiKey || !googleSearchEngineId) return '';
+
+  const params = new URLSearchParams({
+    key: googleSearchApiKey,
+    cx: googleSearchEngineId,
+    q: text,
+    num: '5',
+    safe: 'active',
+  });
+
+  try {
+    const response = await fetch(`https://www.googleapis.com/customsearch/v1?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+    });
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      console.error('Google Custom Search error:', result?.error?.message || response.statusText);
+      return '';
+    }
+
+    const items = Array.isArray(result?.items) ? result.items : [];
+    return items
+      .filter(item => item?.link)
+      .slice(0, 5)
+      .map(formatSearchResult)
+      .join('\n\n');
+  } catch (error) {
+    console.error('Google Custom Search request failed:', error);
+    return '';
+  }
+}
 
 const userProfile = process.env.USERPROFILE || process.env.HOME || '';
 const operaGxCandidates = [
