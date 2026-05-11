@@ -1,7 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
 import { FRIDAY_SYSTEM_PROMPT } from "../constants";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 let lastTranscriptionError = '';
 
 export function getLastTranscriptionError() {
@@ -48,58 +46,31 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
     console.error('Local transcription request failed:', error);
   }
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [{
-        role: "user",
-        parts: [
-          {
-            text: [
-              "Transcribe the entire audio clip exactly as spoken.",
-              "Preserve long sentences, all command details, app names, file names, punctuation when clear, and the wake word if it was spoken.",
-              "Do not summarize, shorten, correct intent, add commentary, add labels, add markdown, or wrap the result in quotes.",
-              "Return only the spoken words."
-            ].join(" ")
-          },
-          {
-            inlineData: {
-              data: audioBase64,
-              mimeType,
-            }
-          }
-        ]
-      }]
-    });
-
-    return response.text?.trim() || '';
-  } catch (error) {
-    lastTranscriptionError = error instanceof Error ? error.message : (lastTranscriptionError || 'Gemini transcription failed.');
-    console.error("Gemini Transcription Error:", error);
-    return '';
-  }
+  return '';
 }
 
 export async function* streamFridayResponse(messages: { role: 'user' | 'assistant' | 'system', content: string }[]) {
   try {
-    const chat = ai.chats.create({
-      model: "gemini-3-flash-preview",
-      config: {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages,
         systemInstruction: FRIDAY_SYSTEM_PROMPT,
-      }
+      }),
     });
 
-    // We only send the latest user message to simplify for now, or we can send the whole history
-    const userMessage = messages[messages.length - 1].content;
-    const streamResponse = await chat.sendMessageStream({ message: userMessage });
+    const result = await response.json().catch(() => null) as { ok?: boolean; text?: string; error?: string } | null;
 
-    for await (const chunk of streamResponse) {
-      if (chunk.text) {
-        yield chunk.text;
-      }
+    if (!response.ok || !result?.ok) {
+      const error = cleanTranscriptionError(result?.error || response.statusText || 'FRIDAY server request failed.');
+      yield `I cannot reach the Gemini server right now: ${error}`;
+      return;
     }
+
+    yield result.text?.trim() || 'I did not receive a response from Gemini.';
   } catch (error) {
     console.error("Gemini Error:", error);
-    yield "Error: Connection lost. Systems failing, Sir. Please check your connectivity.";
+    yield "I cannot reach the FRIDAY server right now. Check the Render service and network connection.";
   }
 }

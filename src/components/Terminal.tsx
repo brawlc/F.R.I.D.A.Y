@@ -602,7 +602,7 @@ export const Terminal: React.FC = () => {
       return `AVAILABLE SYSTEM COMMANDS:\n- open instagram/youtube/google/gmail/whatsapp/chatgpt/github: Open site in browser\n- open notepad/calculator/camera/settings/explorer/downloads/documents/desktop/vscode: Open approved local apps and folders\n- clear/cls: Clear the terminal screen\n- time: Display system clock\n- help: Show this menu\n- status: Diagnostic overview\n- listen: Enable voice input\n- stop listening: Disable voice input\n- sleep/stand down/go idle: End active conversation\n- mute/unmute: Toggle spoken responses\n\nVoice: Hand icon controls the "Friday wake up" wake phrase. Ear icon controls hands-free follow-up. With both on, FRIDAY can wake from standby, answer, and keep listening until sleep or timeout.`;
     }
 
-    if (cmd === 'status') {
+    if (cmd === 'status' || cmd === 'system checks' || cmd === 'do system checks' || cmd.includes('do system checks')) {
       return `SYSTEM DIAGNOSTICS [OK]\nCORE TEMPERATURE: 38 C\nMEMORY USAGE: 2.1GB / 64GB\nNETWORK: SECURE_LINK_PRO\nAI MODEL: GEMINI_FLASH_3.0\nVOICE INPUT: ${speechSupported ? 'AVAILABLE' : 'UNSUPPORTED'}\nAUDIO OUTPUT: ${'speechSynthesis' in window ? 'AVAILABLE' : 'UNSUPPORTED'}\nINTEGRITY: 100%`;
     }
 
@@ -636,14 +636,35 @@ export const Terminal: React.FC = () => {
   }, [endConversation, speechSupported]);
 
   const normalizeVoiceCommand = (rawText: string) => rawText.replace(/[^\p{L}\p{N}\s?!.,"'-]/gu, '').trim();
+  const stripAssistantEcho = (rawText: string) => {
+    let cleaned = normalizeVoiceCommand(rawText);
+    cleaned = cleaned.replace(/^error:?\s*connection lost\.?\s*systems failing,?\s*sir\.?\s*/i, '');
+    cleaned = cleaned.replace(/^please check your connectivity\.?\s*/i, '');
+    cleaned = cleaned.replace(/^i cannot reach the friday server right now\.?\s*/i, '');
+    cleaned = cleaned.replace(/^i cannot reach the gemini server right now:?\s*/i, '');
+    return cleaned.trim();
+  };
+  const isAssistantFailureEcho = (rawText: string) => {
+    const normalized = stripAssistantEcho(rawText).toLowerCase();
+    return normalized === ''
+      || normalized === 'friday'
+      || normalized === 'friday.'
+      || normalized === 'sir';
+  };
   const isFridayWakeUpPhrase = (rawText: string) => {
     const normalized = normalizeVoiceCommand(rawText).toLowerCase();
     return /\bfriday\b/.test(normalized) && /\b(wake up|wakeup|activate|online|start listening)\b/.test(normalized);
   };
 
   const handleSendText = useCallback(async (rawText: string) => {
-    const text = rawText.trim();
+    const text = stripAssistantEcho(rawText).trim();
     if (!text || processingRef.current) return;
+
+    if (isAssistantFailureEcho(text)) {
+      setLiveTranscript('');
+      setVoiceStatus(wakeModeRef.current ? 'Listening for "Friday"' : 'Listening');
+      return;
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -699,7 +720,7 @@ export const Terminal: React.FC = () => {
           )
         );
       }
-      speak(accumulatedContent);
+      if (!isAssistantFailureEcho(accumulatedContent)) speak(accumulatedContent);
     } finally {
       setMessages(prev =>
         prev.map(m =>
@@ -1037,6 +1058,11 @@ export const Terminal: React.FC = () => {
     };
 
     recognition.onerror = (event) => {
+      if (event.error === 'aborted') {
+        setVoiceStatus(wakeModeRef.current ? 'Listening for "Friday"' : 'Listening');
+        return;
+      }
+
       if (event.error === 'network') {
         shouldListenRef.current = false;
         setIsListening(false);

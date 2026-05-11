@@ -123,6 +123,60 @@ app.post('/api/transcribe', async (req, res) => {
   }
 });
 
+app.post('/api/chat', async (req, res) => {
+  if (!gemini) {
+    res.status(500).json({
+      ok: false,
+      error: 'GEMINI_API_KEY is missing on the server.',
+    });
+    return;
+  }
+
+  const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+  const latestUserMessage = [...messages].reverse().find(message => message?.role === 'user');
+  const text = String(latestUserMessage?.content || '').trim();
+  const systemInstruction = String(req.body?.systemInstruction || '').trim();
+
+  if (!text) {
+    res.status(400).json({
+      ok: false,
+      error: 'No user message received.',
+    });
+    return;
+  }
+
+  try {
+    const response = await gemini.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      config: systemInstruction ? { systemInstruction } : undefined,
+      contents: [{
+        role: 'user',
+        parts: [{ text }],
+      }],
+    });
+
+    res.json({
+      ok: true,
+      text: response.text?.trim() || '',
+    });
+  } catch (error) {
+    console.error('Gemini chat error:', error);
+    let message = error instanceof Error ? error.message : 'Gemini chat failed.';
+
+    try {
+      const parsed = JSON.parse(message);
+      message = parsed?.error?.message || message;
+    } catch {
+      // Keep the SDK message.
+    }
+
+    res.status(500).json({
+      ok: false,
+      error: message,
+    });
+  }
+});
+
 const userProfile = process.env.USERPROFILE || process.env.HOME || '';
 const operaGxCandidates = [
   join(userProfile, 'AppData', 'Local', 'Programs', 'Opera GX', 'launcher.exe'),
