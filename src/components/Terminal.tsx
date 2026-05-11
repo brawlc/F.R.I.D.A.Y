@@ -23,6 +23,13 @@ import { streamFridayResponse, transcribeAudioCommand } from '../services/ai';
 
 type SpeechMode = 'browser' | 'gemini';
 type LocalCommandResult = string | null;
+type DesktopOpenResult = {
+  ok: boolean;
+  desktopBridge?: boolean;
+  clientOpen?: boolean;
+  message?: string;
+  url?: string;
+};
 const MAX_GEMINI_RECORDING_MS = 25000;
 const CLAP_ARM_TIMEOUT_MS = 12000;
 const CONVERSATION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -450,16 +457,50 @@ export const Terminal: React.FC = () => {
     return cleaned.slice(wakeIndex + 'friday'.length).trim();
   }, []);
 
+  const postDesktopOpen = async (endpoint: string, command: string) => {
+    const response = await fetch(`${endpoint}/api/desktop/open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: command }),
+    });
+    return await response.json() as DesktopOpenResult;
+  };
+
   const runDesktopOpenCommand = useCallback(async (command: string) => {
+    const isLocalPage = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
     try {
-      const response = await fetch('/api/desktop/open', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: command }),
-      });
-      const result = await response.json() as { ok: boolean; message?: string };
+      const result = await postDesktopOpen('', command);
+
+      if (result.ok && result.clientOpen && result.url) {
+        window.open(result.url, '_blank', 'noopener,noreferrer');
+        return result.message || 'Opening requested target.';
+      }
+
+      if (result.ok) return result.message || 'Opening requested target.';
+
+      if (!isLocalPage && result.desktopBridge === false) {
+        const localResult = await postDesktopOpen('http://127.0.0.1:3000', command);
+        if (localResult.ok && localResult.clientOpen && localResult.url) {
+          window.open(localResult.url, '_blank', 'noopener,noreferrer');
+        }
+        return localResult.message || (localResult.ok ? 'Opening requested target.' : 'Desktop command failed.');
+      }
+
       return result.message || (result.ok ? 'Opening requested target.' : 'Desktop command failed.');
     } catch {
+      if (!isLocalPage) {
+        try {
+          const localResult = await postDesktopOpen('http://127.0.0.1:3000', command);
+          if (localResult.ok && localResult.clientOpen && localResult.url) {
+            window.open(localResult.url, '_blank', 'noopener,noreferrer');
+          }
+          return localResult.message || (localResult.ok ? 'Opening requested target.' : 'Desktop command failed.');
+        } catch {
+          return 'Local desktop bridge offline. Keep FRIDAY running on this Windows PC, then try again.';
+        }
+      }
+
       return 'Desktop bridge offline. Start FRIDAY with npm run dev so I can control approved desktop actions.';
     }
   }, []);

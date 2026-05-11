@@ -57,3 +57,14 @@ This repo includes `render.yaml` for a Render web service.
    - Start command: `npm start`
 
 The hosted Render version can run the chat, voice UI, and Gemini features in the browser. Local desktop actions such as opening apps or folders only work on your Windows machine through the local server.
+
+## Cloud + Desktop Bridge
+
+To use both Render and desktop control:
+
+1. Keep the Render web service live for the hosted FRIDAY UI.
+2. On your Windows PC, also run:
+   `.\start-friday.ps1`
+3. Open the Render URL in your browser.
+
+When the hosted page receives a desktop command, it first asks Render. If the command needs Windows access, it automatically falls back to the local bridge at `http://127.0.0.1:3000`. Keep that local bridge running whenever you want FRIDAY to open local apps, folders, or Opera GX.
