@@ -144,6 +144,9 @@ export const Terminal: React.FC = () => {
   const isWakePhraseRecordingRef = useRef(false);
   const recognitionRestartTimerRef = useRef<number | null>(null);
   const recognitionRestartAttemptsRef = useRef(0);
+  const speechResumeTimerRef = useRef<number | null>(null);
+  const assistantSpeakingRef = useRef(false);
+  const speechSuppressionUntilRef = useRef(0);
   const startWakePhraseRecordingRef = useRef<() => void>(() => {});
   const startHandsFreeRecordingRef = useRef<() => void>(() => {});
   const stopHandsFreeRecordingRef = useRef<() => void>(() => {});
@@ -240,7 +243,21 @@ export const Terminal: React.FC = () => {
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !('speechSynthesis' in window) || !text.trim()) return;
 
+    if (speechResumeTimerRef.current) {
+      window.clearTimeout(speechResumeTimerRef.current);
+      speechResumeTimerRef.current = null;
+    }
+
     window.speechSynthesis.cancel();
+    assistantSpeakingRef.current = true;
+    speechSuppressionUntilRef.current = Number.POSITIVE_INFINITY;
+
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // Recognition may already be stopped by the browser.
+    }
+
     const cleanText = text
       .replace(/\[[^\]]+\]/g, '')
       .replace(/https?:\/\/\S+/g, '')
@@ -256,6 +273,25 @@ export const Terminal: React.FC = () => {
       || voices.find(voice => /jenny|aria|sara|samantha|zira|hazel|susan|female|natural|online/i.test(voice.name));
     if (selectedVoice) utterance.voice = selectedVoice;
 
+    const resumeAfterSpeech = () => {
+      assistantSpeakingRef.current = false;
+      speechSuppressionUntilRef.current = performance.now() + 1200;
+
+      speechResumeTimerRef.current = window.setTimeout(() => {
+        speechResumeTimerRef.current = null;
+        if (!shouldListenRef.current || processingRef.current || isRecordingRef.current || isTranscribingRef.current) return;
+
+        try {
+          recognitionRef.current?.start();
+          setVoiceStatus(wakeModeRef.current ? 'Listening for "Friday"' : 'Listening');
+        } catch {
+          setVoiceStatus(wakeModeRef.current ? 'Listening for "Friday"' : 'Listening');
+        }
+      }, 1200);
+    };
+
+    utterance.onend = resumeAfterSpeech;
+    utterance.onerror = resumeAfterSpeech;
     window.speechSynthesis.speak(utterance);
   }, [availableVoices, selectedVoiceURI, voiceEnabled, voicePitch, voiceRate]);
 
@@ -294,6 +330,11 @@ export const Terminal: React.FC = () => {
       recognitionRestartTimerRef.current = null;
     }
     recognitionRestartAttemptsRef.current = 0;
+
+    if (speechResumeTimerRef.current) {
+      window.clearTimeout(speechResumeTimerRef.current);
+      speechResumeTimerRef.current = null;
+    }
 
     recorderRef.current = null;
     recordingChunksRef.current = [];
@@ -935,6 +976,10 @@ export const Terminal: React.FC = () => {
     recognition.lang = 'en-US';
 
     recognition.onresult = (event) => {
+      if (assistantSpeakingRef.current || performance.now() < speechSuppressionUntilRef.current) {
+        return;
+      }
+
       let interim = '';
 
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -1011,6 +1056,10 @@ export const Terminal: React.FC = () => {
     };
 
     recognition.onend = () => {
+      if (assistantSpeakingRef.current || performance.now() < speechSuppressionUntilRef.current) {
+        return;
+      }
+
       if (shouldListenRef.current) {
         recognitionRestartAttemptsRef.current += 1;
 
@@ -1052,7 +1101,7 @@ export const Terminal: React.FC = () => {
     const recognition = recognitionRef.current;
     if (!recognition) return;
 
-    if (isListening && !isProcessing) {
+    if (isListening && !isProcessing && !assistantSpeakingRef.current && performance.now() >= speechSuppressionUntilRef.current) {
       try {
         recognitionRestartAttemptsRef.current = 0;
         recognition.start();
