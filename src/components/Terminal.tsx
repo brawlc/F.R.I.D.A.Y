@@ -144,6 +144,7 @@ export const Terminal: React.FC = () => {
   const recognitionRestartTimerRef = useRef<number | null>(null);
   const recognitionRestartAttemptsRef = useRef(0);
   const speechResumeTimerRef = useRef<number | null>(null);
+  const speechEndFallbackTimerRef = useRef<number | null>(null);
   const assistantSpeakingRef = useRef(false);
   const speechSuppressionUntilRef = useRef(0);
   const lastMicFailureRef = useRef({ name: '', at: 0 });
@@ -276,9 +277,13 @@ export const Terminal: React.FC = () => {
       speechResumeTimerRef.current = null;
     }
 
+    if (speechEndFallbackTimerRef.current) {
+      window.clearTimeout(speechEndFallbackTimerRef.current);
+      speechEndFallbackTimerRef.current = null;
+    }
+
     window.speechSynthesis.cancel();
     assistantSpeakingRef.current = true;
-    speechSuppressionUntilRef.current = performance.now() + 15000;
 
     try {
       recognitionRef.current?.stop();
@@ -291,6 +296,17 @@ export const Terminal: React.FC = () => {
       .replace(/https?:\/\/\S+/g, '')
       .replace(/\s+/g, ' ')
       .trim();
+
+    if (!cleanText) {
+      assistantSpeakingRef.current = false;
+      speechSuppressionUntilRef.current = performance.now() + 300;
+      restartRecognitionWhenReady(300);
+      return;
+    }
+
+    const estimatedSpeechMs = Math.min(12000, Math.max(1500, cleanText.length * 55));
+    speechSuppressionUntilRef.current = performance.now() + estimatedSpeechMs + 900;
+
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = voiceRate;
     utterance.pitch = voicePitch;
@@ -302,6 +318,12 @@ export const Terminal: React.FC = () => {
     if (selectedVoice) utterance.voice = selectedVoice;
 
     const resumeAfterSpeech = () => {
+      if (!assistantSpeakingRef.current) return;
+      if (speechEndFallbackTimerRef.current) {
+        window.clearTimeout(speechEndFallbackTimerRef.current);
+        speechEndFallbackTimerRef.current = null;
+      }
+
       assistantSpeakingRef.current = false;
       speechSuppressionUntilRef.current = performance.now() + 700;
       restartRecognitionWhenReady(700);
@@ -309,6 +331,7 @@ export const Terminal: React.FC = () => {
 
     utterance.onend = resumeAfterSpeech;
     utterance.onerror = resumeAfterSpeech;
+    speechEndFallbackTimerRef.current = window.setTimeout(resumeAfterSpeech, estimatedSpeechMs + 1200);
     window.speechSynthesis.speak(utterance);
   }, [availableVoices, restartRecognitionWhenReady, selectedVoiceURI, voiceEnabled, voicePitch, voiceRate]);
 
@@ -352,6 +375,14 @@ export const Terminal: React.FC = () => {
       window.clearTimeout(speechResumeTimerRef.current);
       speechResumeTimerRef.current = null;
     }
+
+    if (speechEndFallbackTimerRef.current) {
+      window.clearTimeout(speechEndFallbackTimerRef.current);
+      speechEndFallbackTimerRef.current = null;
+    }
+
+    assistantSpeakingRef.current = false;
+    speechSuppressionUntilRef.current = 0;
 
     recorderRef.current = null;
     recordingChunksRef.current = [];
