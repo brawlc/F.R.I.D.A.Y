@@ -735,6 +735,9 @@ export const Terminal: React.FC = () => {
     const normalized = normalizeVoiceCommand(rawText).toLowerCase();
     return /\bfriday\b/.test(normalized) && /\b(wake up|wakeup|activate|online|start listening)\b/.test(normalized);
   };
+  const stripFridayWakeUpPhrase = (rawText: string) => normalizeVoiceCommand(rawText)
+    .replace(/\bfriday\b[\s,]*(?:wake up|wakeup|activate|online|start listening)\b[\s,]*/i, '')
+    .trim();
 
   const handleSendText = useCallback(async (rawText: string) => {
     const text = stripAssistantEcho(rawText).trim();
@@ -891,15 +894,26 @@ export const Terminal: React.FC = () => {
           setLiveTranscript(transcript || '');
 
           if (transcript && isFridayWakeUpPhrase(transcript)) {
+            const wakeCommand = stripFridayWakeUpPhrase(transcript);
             conversationActiveRef.current = true;
             setIsConversationActive(true);
             refreshConversationIdleTimer();
             autoRecordCooldownUntilRef.current = performance.now() + 900;
             setVoiceStatus('Wake phrase detected');
             window.fridayDesktop?.showWindow();
-            addSystemMessage('WAKE PHRASE DETECTED\nConversation active. Ask your question now, or type in the command line below.');
+            addSystemMessage(wakeCommand
+              ? `WAKE PHRASE DETECTED\nCommand captured: ${wakeCommand}`
+              : 'WAKE PHRASE DETECTED\nConversation active. Ask your question now, or type in the command line below.');
             inputRef.current?.focus();
-            speak('FRIDAY online. How can I help, Sir?');
+            if (hasCommandText(wakeCommand)) {
+              setVoiceStatus('Command captured');
+              await handleSendText(wakeCommand);
+            } else {
+              shouldListenRef.current = true;
+              setIsListening(true);
+              speak('FRIDAY online. How can I help, Sir?');
+              restartRecognitionWhenReady(1800);
+            }
           } else {
             setVoiceStatus(transcript ? 'Standby: say "Friday wake up"' : 'Wake phrase not heard');
             if (transcript) addSystemMessage(`HEARD DURING WAKE CHECK: ${transcript}`);
@@ -1102,6 +1116,7 @@ export const Terminal: React.FC = () => {
             setLiveTranscript(cleanedTranscript);
 
             if (isFridayWakeUpPhrase(cleanedTranscript)) {
+              const wakeCommand = stripFridayWakeUpPhrase(cleanedTranscript);
               conversationActiveRef.current = true;
               setIsConversationActive(true);
               setIsClapArmed(false);
@@ -1109,9 +1124,19 @@ export const Terminal: React.FC = () => {
               refreshConversationIdleTimer();
               setVoiceStatus('Wake phrase detected');
               window.fridayDesktop?.showWindow();
-              addSystemMessage('WAKE PHRASE DETECTED\nConversation active. Ask your question now, or type in the command line below.');
+              addSystemMessage(wakeCommand
+                ? `WAKE PHRASE DETECTED\nCommand captured: ${wakeCommand}`
+                : 'WAKE PHRASE DETECTED\nConversation active. Ask your question now, or type in the command line below.');
               inputRef.current?.focus();
-              speak('FRIDAY online. How can I help, Sir?');
+              if (hasCommandText(wakeCommand)) {
+                setVoiceStatus('Command captured');
+                void handleSendText(wakeCommand);
+              } else {
+                shouldListenRef.current = true;
+                setIsListening(true);
+                speak('FRIDAY online. How can I help, Sir?');
+                restartRecognitionWhenReady(1800);
+              }
             } else if (/\bfriday\b/.test(normalized)) {
               const wakeIndex = normalized.indexOf('friday');
               const command = cleanedTranscript.slice(wakeIndex + 'friday'.length).trim();
