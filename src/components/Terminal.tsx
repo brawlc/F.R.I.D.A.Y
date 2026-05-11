@@ -741,9 +741,23 @@ export const Terminal: React.FC = () => {
   const stripFridayAddress = (rawText: string) => stripFridayWakeUpPhrase(rawText)
     .replace(/\bfriday\b[\s,.:;!?-]*/i, '')
     .trim();
+  const normalizeCommandPhrase = (rawText: string) => normalizeVoiceCommand(rawText)
+    .replace(/^(?:and|then|now|please)\s+/i, '')
+    .replace(/\s+(?:please)$/i, '')
+    .trim();
+
+  const resumeConversationListening = useCallback((delay = 700) => {
+    if (!conversationActiveRef.current) return;
+
+    refreshConversationIdleTimer();
+    shouldListenRef.current = true;
+    setIsListening(true);
+    setVoiceStatus(handsFreeEnabled ? 'Hands-free listening' : 'Conversation active');
+    restartRecognitionWhenReady(delay);
+  }, [handsFreeEnabled, refreshConversationIdleTimer, restartRecognitionWhenReady]);
 
   const handleSendText = useCallback(async (rawText: string) => {
-    const text = stripAssistantEcho(rawText).trim();
+    const text = normalizeCommandPhrase(stripAssistantEcho(rawText));
     if (!text || !hasCommandText(text) || processingRef.current) return;
 
     if (isAssistantFailureEcho(text)) {
@@ -774,6 +788,7 @@ export const Terminal: React.FC = () => {
       if (cmd !== 'clear' && cmd !== 'cls') addSystemMessage(localResponse);
       speak(localResponse);
       setIsProcessing(false);
+      resumeConversationListening(voiceEnabled ? 900 : 250);
       return;
     }
 
@@ -816,8 +831,9 @@ export const Terminal: React.FC = () => {
         )
       );
       setIsProcessing(false);
+      resumeConversationListening(voiceEnabled ? 1200 : 250);
     }
-  }, [addSystemMessage, handleLocalCommand, messages, runDesktopOpenCommand, speak]);
+  }, [addSystemMessage, handleLocalCommand, messages, resumeConversationListening, runDesktopOpenCommand, speak, voiceEnabled]);
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
