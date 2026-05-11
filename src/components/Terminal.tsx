@@ -74,6 +74,9 @@ declare global {
     SpeechRecognition?: SpeechRecognitionConstructor;
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
     webkitAudioContext?: typeof AudioContext;
+    fridayDesktop?: {
+      showWindow: () => void;
+    };
   }
 }
 
@@ -108,6 +111,7 @@ export const Terminal: React.FC = () => {
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('friday.voiceRate') || '0.94'));
   const [voicePitch, setVoicePitch] = useState(() => Number(localStorage.getItem('friday.voicePitch') || '1.06'));
   const [showVoiceControls, setShowVoiceControls] = useState(false);
+  const isDesktopShell = useMemo(() => new URLSearchParams(window.location.search).get('desktop') === '1', []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -752,9 +756,11 @@ export const Terminal: React.FC = () => {
       refreshConversationIdleTimer();
       autoRecordCooldownUntilRef.current = performance.now() + 350;
       setVoiceStatus('Double clap detected');
+      window.fridayDesktop?.showWindow();
+      speak('FRIDAY online. How can I help, Sir?');
       void startGeminiRecording();
     };
-  }, [refreshConversationIdleTimer, startGeminiRecording]);
+  }, [refreshConversationIdleTimer, speak, startGeminiRecording]);
 
   const armClapWake = useCallback(async () => {
     const micReady = await startMicMeter();
@@ -779,6 +785,17 @@ export const Terminal: React.FC = () => {
       stopMicMeter();
     }, CLAP_ARM_TIMEOUT_MS);
   }, [speak, startMicMeter, stopMicMeter]);
+
+  useEffect(() => {
+    if (!isDesktopShell || !clapWakeEnabled) return;
+
+    const timer = window.setTimeout(() => {
+      void armClapWake();
+      setVoiceStatus('Desktop standby: clap twice');
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [armClapWake, clapWakeEnabled, isDesktopShell]);
 
   const toggleListening = async () => {
     if (clapWakeEnabled) {

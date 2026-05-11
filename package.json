@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
+    "desktop": "electron electron/main.cjs",
     "start": "NODE_ENV=production node server.mjs",
     "build": "vite build",
     "preview": "vite preview",
@@ -33,6 +34,7 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
-    "@types/express": "^4.17.21"
+    "@types/express": "^4.17.21",
+    "electron": "^39.2.6"
   }
 }

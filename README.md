@@ -38,10 +38,24 @@ On Windows, launch it like a desktop companion:
 .\start-friday.ps1
 ```
 
+To run FRIDAY as a hidden desktop listener that opens when you clap twice:
+
+```powershell
+.\start-friday-desktop.ps1
+```
+
+In desktop mode, the Electron shell stays alive in the background with a hidden FRIDAY window. The first time it runs, Windows/Electron may request microphone permission. After that, double clap shows the FRIDAY window and starts the first spoken line. Closing the FRIDAY window hides it instead of fully quitting; quit the Electron process to stop background listening.
+
 To make FRIDAY start when you sign in to Windows:
 
 ```powershell
 .\install-friday-startup.ps1
+```
+
+To make the hidden clap listener start when you sign in to Windows:
+
+```powershell
+.\install-friday-desktop-startup.ps1
 ```
 
 ## Deploy to Render
