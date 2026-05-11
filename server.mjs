@@ -33,6 +33,9 @@ const openTargets = {
   amazon: 'https://www.amazon.com/',
   netflix: 'https://www.netflix.com/',
   spotify: 'https://open.spotify.com/',
+  hotstar: 'https://www.hotstar.com/in',
+  'jio hotstar': 'https://www.hotstar.com/in',
+  jiohotstar: 'https://www.hotstar.com/in',
   maps: 'https://www.google.com/maps',
 };
 
