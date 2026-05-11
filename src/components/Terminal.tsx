@@ -240,6 +240,34 @@ export const Terminal: React.FC = () => {
     localStorage.setItem('friday.handsFree', String(handsFreeEnabled));
   }, [handsFreeEnabled]);
 
+  const restartRecognitionWhenReady = useCallback((delay = 0) => {
+    if (speechResumeTimerRef.current) {
+      window.clearTimeout(speechResumeTimerRef.current);
+      speechResumeTimerRef.current = null;
+    }
+
+    speechResumeTimerRef.current = window.setTimeout(() => {
+      speechResumeTimerRef.current = null;
+
+      if (!shouldListenRef.current || processingRef.current || isRecordingRef.current || isTranscribingRef.current) return;
+
+      const now = performance.now();
+      if (assistantSpeakingRef.current || now < speechSuppressionUntilRef.current) {
+        restartRecognitionWhenReady(Math.max(250, speechSuppressionUntilRef.current - now));
+        return;
+      }
+
+      try {
+        recognitionRestartAttemptsRef.current = 0;
+        recognitionRef.current?.start();
+        setVoiceStatus(wakeModeRef.current ? 'Listening for "Friday"' : 'Listening');
+      } catch {
+        setVoiceStatus('Voice engine restarting');
+        restartRecognitionWhenReady(500);
+      }
+    }, delay);
+  }, []);
+
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !('speechSynthesis' in window) || !text.trim()) return;
 
@@ -250,7 +278,7 @@ export const Terminal: React.FC = () => {
 
     window.speechSynthesis.cancel();
     assistantSpeakingRef.current = true;
-    speechSuppressionUntilRef.current = Number.POSITIVE_INFINITY;
+    speechSuppressionUntilRef.current = performance.now() + 15000;
 
     try {
       recognitionRef.current?.stop();
@@ -275,25 +303,14 @@ export const Terminal: React.FC = () => {
 
     const resumeAfterSpeech = () => {
       assistantSpeakingRef.current = false;
-      speechSuppressionUntilRef.current = performance.now() + 1200;
-
-      speechResumeTimerRef.current = window.setTimeout(() => {
-        speechResumeTimerRef.current = null;
-        if (!shouldListenRef.current || processingRef.current || isRecordingRef.current || isTranscribingRef.current) return;
-
-        try {
-          recognitionRef.current?.start();
-          setVoiceStatus(wakeModeRef.current ? 'Listening for "Friday"' : 'Listening');
-        } catch {
-          setVoiceStatus(wakeModeRef.current ? 'Listening for "Friday"' : 'Listening');
-        }
-      }, 1200);
+      speechSuppressionUntilRef.current = performance.now() + 700;
+      restartRecognitionWhenReady(700);
     };
 
     utterance.onend = resumeAfterSpeech;
     utterance.onerror = resumeAfterSpeech;
     window.speechSynthesis.speak(utterance);
-  }, [availableVoices, selectedVoiceURI, voiceEnabled, voicePitch, voiceRate]);
+  }, [availableVoices, restartRecognitionWhenReady, selectedVoiceURI, voiceEnabled, voicePitch, voiceRate]);
 
   const addSystemMessage = useCallback((content: string) => {
     setMessages(prev => [...prev, {
@@ -1060,6 +1077,7 @@ export const Terminal: React.FC = () => {
     recognition.onerror = (event) => {
       if (event.error === 'aborted') {
         setVoiceStatus(wakeModeRef.current ? 'Listening for "Friday"' : 'Listening');
+        restartRecognitionWhenReady(250);
         return;
       }
 
@@ -1083,6 +1101,7 @@ export const Terminal: React.FC = () => {
 
     recognition.onend = () => {
       if (assistantSpeakingRef.current || performance.now() < speechSuppressionUntilRef.current) {
+        restartRecognitionWhenReady(Math.max(250, speechSuppressionUntilRef.current - performance.now()));
         return;
       }
 
@@ -1119,7 +1138,7 @@ export const Terminal: React.FC = () => {
       shouldListenRef.current = false;
       recognition.stop();
     };
-  }, [addSystemMessage, handleSendText, speechSupported, stopMicMeter]);
+  }, [addSystemMessage, handleSendText, restartRecognitionWhenReady, speechSupported, stopMicMeter]);
 
   useEffect(() => {
     shouldListenRef.current = isListening;
@@ -1135,11 +1154,13 @@ export const Terminal: React.FC = () => {
       } catch {
         setVoiceStatus(wakeMode ? 'Listening for "Friday"' : 'Listening');
       }
+    } else if (isListening && !isProcessing) {
+      restartRecognitionWhenReady(Math.max(250, speechSuppressionUntilRef.current - performance.now()));
     } else {
       recognition.stop();
       if (!isListening) setVoiceStatus('Voice idle');
     }
-  }, [isListening, isProcessing, wakeMode]);
+  }, [isListening, isProcessing, restartRecognitionWhenReady, wakeMode]);
 
   useEffect(() => {
     return () => {
