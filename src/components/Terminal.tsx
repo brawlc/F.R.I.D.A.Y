@@ -736,7 +736,10 @@ export const Terminal: React.FC = () => {
     return /\bfriday\b/.test(normalized) && /\b(wake up|wakeup|activate|online|start listening)\b/.test(normalized);
   };
   const stripFridayWakeUpPhrase = (rawText: string) => normalizeVoiceCommand(rawText)
-    .replace(/\bfriday\b[\s,]*(?:wake up|wakeup|activate|online|start listening)\b[\s,]*/i, '')
+    .replace(/\bfriday\b[\s,.:;!?-]*(?:wake up|wakeup|activate|online|start listening)\b[\s,.:;!?-]*/i, '')
+    .trim();
+  const stripFridayAddress = (rawText: string) => stripFridayWakeUpPhrase(rawText)
+    .replace(/\bfriday\b[\s,.:;!?-]*/i, '')
     .trim();
 
   const handleSendText = useCallback(async (rawText: string) => {
@@ -1121,15 +1124,18 @@ export const Terminal: React.FC = () => {
 
           if (clapWakeEnabledRef.current && isClapArmedRef.current) {
             setLiveTranscript(cleanedTranscript);
+            addSystemMessage(`HEARD: ${cleanedTranscript}`);
 
-            if (isFridayWakeUpPhrase(cleanedTranscript)) {
-              const wakeCommand = stripFridayWakeUpPhrase(cleanedTranscript);
+            if (/\bfriday\b/.test(normalized)) {
+              const wakeCommand = isFridayWakeUpPhrase(cleanedTranscript)
+                ? stripFridayWakeUpPhrase(cleanedTranscript)
+                : stripFridayAddress(cleanedTranscript);
               conversationActiveRef.current = true;
               setIsConversationActive(true);
               setIsClapArmed(false);
               isClapArmedRef.current = false;
               refreshConversationIdleTimer();
-              setVoiceStatus('Wake phrase detected');
+              setVoiceStatus(hasCommandText(wakeCommand) ? 'Command captured' : 'Wake phrase detected');
               window.fridayDesktop?.showWindow();
               addSystemMessage(wakeCommand
                 ? `WAKE PHRASE DETECTED\nCommand captured: ${wakeCommand}`
@@ -1150,21 +1156,6 @@ export const Terminal: React.FC = () => {
                   // Recognition may already be cycling.
                 }
                 restartRecognitionWhenReady(350);
-              }
-            } else if (/\bfriday\b/.test(normalized)) {
-              const wakeIndex = normalized.indexOf('friday');
-              const command = cleanedTranscript.slice(wakeIndex + 'friday'.length).trim();
-
-              if (hasCommandText(command)) {
-                conversationActiveRef.current = true;
-                setIsConversationActive(true);
-                setIsClapArmed(false);
-                isClapArmedRef.current = false;
-                refreshConversationIdleTimer();
-                setVoiceStatus('Command captured');
-                void handleSendText(command);
-              } else {
-                setVoiceStatus('Listening for command');
               }
             } else {
               setVoiceStatus('Listening for "Friday wake up"');
