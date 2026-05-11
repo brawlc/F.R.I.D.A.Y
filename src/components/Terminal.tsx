@@ -142,6 +142,8 @@ export const Terminal: React.FC = () => {
   const autoRecordCooldownUntilRef = useRef(0);
   const ambientRmsRef = useRef(0);
   const isWakePhraseRecordingRef = useRef(false);
+  const recognitionRestartTimerRef = useRef<number | null>(null);
+  const recognitionRestartAttemptsRef = useRef(0);
   const startWakePhraseRecordingRef = useRef<() => void>(() => {});
   const startHandsFreeRecordingRef = useRef<() => void>(() => {});
   const stopHandsFreeRecordingRef = useRef<() => void>(() => {});
@@ -286,6 +288,12 @@ export const Terminal: React.FC = () => {
       window.clearTimeout(conversationIdleTimerRef.current);
       conversationIdleTimerRef.current = null;
     }
+
+    if (recognitionRestartTimerRef.current) {
+      window.clearTimeout(recognitionRestartTimerRef.current);
+      recognitionRestartTimerRef.current = null;
+    }
+    recognitionRestartAttemptsRef.current = 0;
 
     recorderRef.current = null;
     recordingChunksRef.current = [];
@@ -857,16 +865,6 @@ export const Terminal: React.FC = () => {
     }
   }, [addSystemMessage, isDesktopShell, speak, speechSupported, startMicMeter, stopMicMeter]);
 
-  useEffect(() => {
-    if (!clapWakeEnabled || isListening || isRecording || isTranscribing || isConversationActive) return;
-
-    const timer = window.setTimeout(() => {
-      void armClapWake();
-    }, 700);
-
-    return () => window.clearTimeout(timer);
-  }, [armClapWake, clapWakeEnabled, isConversationActive, isListening, isRecording, isTranscribing]);
-
   const toggleListening = async () => {
     if (clapWakeEnabled) {
       if (isRecording) {
@@ -943,6 +941,7 @@ export const Terminal: React.FC = () => {
         const transcript = event.results[i][0].transcript.trim();
 
         if (event.results[i].isFinal) {
+          recognitionRestartAttemptsRef.current = 0;
           const cleanedTranscript = normalizeVoiceCommand(transcript);
           const normalized = cleanedTranscript.toLowerCase();
           let command = cleanedTranscript;
@@ -1004,7 +1003,7 @@ export const Terminal: React.FC = () => {
       }
 
       setVoiceStatus(`Voice error: ${event.error}`);
-      if (event.error === 'not-allowed') {
+      if (event.error === 'not-allowed' || event.error === 'audio-capture') {
         shouldListenRef.current = false;
         setIsListening(false);
         stopMicMeter();
@@ -1013,7 +1012,20 @@ export const Terminal: React.FC = () => {
 
     recognition.onend = () => {
       if (shouldListenRef.current) {
-        window.setTimeout(() => {
+        recognitionRestartAttemptsRef.current += 1;
+
+        if (recognitionRestartAttemptsRef.current > 5) {
+          shouldListenRef.current = false;
+          setIsListening(false);
+          setVoiceStatus('Voice engine paused');
+          addSystemMessage('VOICE ENGINE PAUSED\nSpeech recognition kept stopping, so FRIDAY paused it to protect the browser. Press the mic button to try again.');
+          stopMicMeter();
+          return;
+        }
+
+        const delay = Math.min(2500, 350 * recognitionRestartAttemptsRef.current);
+        if (recognitionRestartTimerRef.current) window.clearTimeout(recognitionRestartTimerRef.current);
+        recognitionRestartTimerRef.current = window.setTimeout(() => {
           if (shouldListenRef.current && !processingRef.current) {
             try {
               recognition.start();
@@ -1022,7 +1034,7 @@ export const Terminal: React.FC = () => {
               setVoiceStatus('Voice engine restarting');
             }
           }
-        }, 350);
+        }, delay);
       }
     };
 
@@ -1042,6 +1054,7 @@ export const Terminal: React.FC = () => {
 
     if (isListening && !isProcessing) {
       try {
+        recognitionRestartAttemptsRef.current = 0;
         recognition.start();
         setVoiceStatus(wakeMode ? 'Listening for "Friday"' : 'Listening');
       } catch {
