@@ -6,7 +6,7 @@ export function getLastTranscriptionError() {
   return lastTranscriptionError;
 }
 
-function cleanTranscriptionError(message: string) {
+function cleanGeminiError(message: string, label = 'Gemini') {
   try {
     const parsed = JSON.parse(message);
     message = parsed?.error?.message || message;
@@ -16,7 +16,7 @@ function cleanTranscriptionError(message: string) {
 
   if (/quota exceeded|RESOURCE_EXHAUSTED|exceeded your current quota/i.test(message)) {
     const retryMatch = message.match(/retry in\s+([^.]+(?:\.\d+)?s)/i) || message.match(/retryDelay["']?\s*:\s*["']?([^"',}]+)/i);
-    return `Gemini transcription quota is exhausted.${retryMatch?.[1] ? ` Retry in ${retryMatch[1]}.` : ''}`;
+    return `${label} quota is exhausted.${retryMatch?.[1] ? ` Retry in ${retryMatch[1]}.` : ''}`;
   }
 
   return message;
@@ -38,7 +38,7 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
     }
 
     const result = await localResponse.json().catch(() => null) as { error?: string } | null;
-    lastTranscriptionError = cleanTranscriptionError(result?.error || localResponse.statusText);
+    lastTranscriptionError = cleanGeminiError(result?.error || localResponse.statusText, 'Gemini transcription');
     console.error('Local transcription error:', lastTranscriptionError);
     return '';
   } catch (error) {
@@ -63,7 +63,7 @@ export async function* streamFridayResponse(messages: { role: 'user' | 'assistan
     const result = await response.json().catch(() => null) as { ok?: boolean; text?: string; error?: string } | null;
 
     if (!response.ok || !result?.ok) {
-      const error = cleanTranscriptionError(result?.error || response.statusText || 'FRIDAY server request failed.');
+      const error = cleanGeminiError(result?.error || response.statusText || 'FRIDAY server request failed.', 'Gemini chat');
       yield `I cannot reach the Gemini server right now: ${error}`;
       return;
     }

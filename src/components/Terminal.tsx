@@ -713,6 +713,7 @@ export const Terminal: React.FC = () => {
     cleaned = cleaned.replace(/^i cannot reach the gemini server right now:?\s*/i, '');
     return cleaned.trim();
   };
+  const hasCommandText = (rawText: string) => /[\p{L}\p{N}]/u.test(rawText);
   const isAssistantFailureEcho = (rawText: string) => {
     const normalized = stripAssistantEcho(rawText).toLowerCase();
     return normalized === ''
@@ -727,7 +728,7 @@ export const Terminal: React.FC = () => {
 
   const handleSendText = useCallback(async (rawText: string) => {
     const text = stripAssistantEcho(rawText).trim();
-    if (!text || processingRef.current) return;
+    if (!text || !hasCommandText(text) || processingRef.current) return;
 
     if (isAssistantFailureEcho(text)) {
       setLiveTranscript('');
@@ -1096,7 +1097,7 @@ export const Terminal: React.FC = () => {
               const wakeIndex = normalized.indexOf('friday');
               const command = cleanedTranscript.slice(wakeIndex + 'friday'.length).trim();
 
-              if (command) {
+              if (hasCommandText(command)) {
                 conversationActiveRef.current = true;
                 setIsConversationActive(true);
                 setIsClapArmed(false);
@@ -1126,7 +1127,7 @@ export const Terminal: React.FC = () => {
               : cleanedTranscript.slice(wakeIndex + 'friday'.length).trim();
           }
 
-          if (command) {
+          if (hasCommandText(command)) {
             setLiveTranscript(command);
             void handleSendText(command);
           } else {
