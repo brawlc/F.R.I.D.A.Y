@@ -113,7 +113,6 @@ export const Terminal: React.FC = () => {
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('friday.voiceRate') || '0.94'));
   const [voicePitch, setVoicePitch] = useState(() => Number(localStorage.getItem('friday.voicePitch') || '1.06'));
   const [showVoiceControls, setShowVoiceControls] = useState(false);
-  const isDesktopShell = useMemo(() => new URLSearchParams(window.location.search).get('desktop') === '1', []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -931,7 +930,6 @@ export const Terminal: React.FC = () => {
     isClapArmedRef.current = true;
     setClapDebug({ peak: 0, rms: 0 });
     setVoiceStatus(speechSupported ? 'Listening for "Friday wake up"' : 'Say "Friday wake up" to activate');
-    if (!isDesktopShell) speak('Wake phrase armed.');
 
     if (speechSupported) {
       shouldListenRef.current = true;
@@ -942,7 +940,7 @@ export const Terminal: React.FC = () => {
       window.clearTimeout(clapArmTimerRef.current);
       clapArmTimerRef.current = null;
     }
-  }, [addSystemMessage, isDesktopShell, speak, speechSupported, startMicMeter, stopMicMeter]);
+  }, [addSystemMessage, speechSupported, startMicMeter, stopMicMeter]);
 
   const toggleListening = async () => {
     if (clapWakeEnabled) {
@@ -1041,6 +1039,21 @@ export const Terminal: React.FC = () => {
               setVoiceStatus('Wake phrase detected');
               window.fridayDesktop?.showWindow();
               speak('FRIDAY online. How can I help, Sir?');
+            } else if (/\bfriday\b/.test(normalized)) {
+              const wakeIndex = normalized.indexOf('friday');
+              const command = cleanedTranscript.slice(wakeIndex + 'friday'.length).trim();
+
+              if (command) {
+                conversationActiveRef.current = true;
+                setIsConversationActive(true);
+                setIsClapArmed(false);
+                isClapArmedRef.current = false;
+                refreshConversationIdleTimer();
+                setVoiceStatus('Command captured');
+                void handleSendText(command);
+              } else {
+                setVoiceStatus('Listening for command');
+              }
             } else {
               setVoiceStatus('Listening for "Friday wake up"');
             }
