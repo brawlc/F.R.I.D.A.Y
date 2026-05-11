@@ -911,8 +911,15 @@ export const Terminal: React.FC = () => {
             } else {
               shouldListenRef.current = true;
               setIsListening(true);
-              speak('FRIDAY online. How can I help, Sir?');
-              restartRecognitionWhenReady(1800);
+              assistantSpeakingRef.current = false;
+              speechSuppressionUntilRef.current = 0;
+              setVoiceStatus('Listening for command');
+              try {
+                recognitionRef.current?.stop();
+              } catch {
+                // Recognition may already be cycling.
+              }
+              restartRecognitionWhenReady(350);
             }
           } else {
             setVoiceStatus(transcript ? 'Standby: say "Friday wake up"' : 'Wake phrase not heard');
@@ -1134,8 +1141,15 @@ export const Terminal: React.FC = () => {
               } else {
                 shouldListenRef.current = true;
                 setIsListening(true);
-                speak('FRIDAY online. How can I help, Sir?');
-                restartRecognitionWhenReady(1800);
+                assistantSpeakingRef.current = false;
+                speechSuppressionUntilRef.current = 0;
+                setVoiceStatus('Listening for command');
+                try {
+                  recognition.stop();
+                } catch {
+                  // Recognition may already be cycling.
+                }
+                restartRecognitionWhenReady(350);
               }
             } else if (/\bfriday\b/.test(normalized)) {
               const wakeIndex = normalized.indexOf('friday');
