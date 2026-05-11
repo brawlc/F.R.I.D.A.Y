@@ -279,6 +279,15 @@ const operaGxCandidates = [
   join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Opera GX', 'launcher.exe'),
 ];
 const operaGxExecutable = operaGxCandidates.find(path => existsSync(path));
+const chromeCandidates = [
+  join(userProfile, 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  join(process.env.ProgramFiles || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+];
+const chromeExecutable = chromeCandidates.find(path => existsSync(path));
+const chromeTarget = chromeExecutable
+  ? { command: chromeExecutable }
+  : { command: 'cmd.exe', args: ['/c', 'start', '', 'chrome'] };
 const localTargets = {
   'opera gx': operaGxExecutable
     ? { command: operaGxExecutable }
@@ -286,6 +295,11 @@ const localTargets = {
   opera: operaGxExecutable
     ? { command: operaGxExecutable }
     : { command: 'cmd.exe', args: ['/c', 'start', '', 'opera'] },
+  'google chrome': chromeTarget,
+  'chrome browser': chromeTarget,
+  chrome: chromeTarget,
+  'cross browser': chromeTarget,
+  cross: chromeTarget,
   notepad: { command: 'notepad.exe' },
   calculator: { command: 'calc.exe' },
   camera: { command: 'cmd.exe', args: ['/c', 'start', '', 'microsoft.windows.camera:'] },
