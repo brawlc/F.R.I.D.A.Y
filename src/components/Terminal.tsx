@@ -113,6 +113,7 @@ export const Terminal: React.FC = () => {
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('friday.voiceRate') || '0.94'));
   const [voicePitch, setVoicePitch] = useState(() => Number(localStorage.getItem('friday.voicePitch') || '1.06'));
   const [showVoiceControls, setShowVoiceControls] = useState(false);
+  const [voiceArmRequestId, setVoiceArmRequestId] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -685,8 +686,8 @@ export const Terminal: React.FC = () => {
     }
 
     if (cmd === 'listen') {
-      setIsListening(true);
-      return 'Voice input enabled.';
+      setVoiceArmRequestId(Date.now());
+      return 'Voice wake listening armed. Allow microphone access if the browser asks, then say "Friday wake up".';
     }
 
     if (cmd === 'stop listening') {
@@ -1006,6 +1007,11 @@ export const Terminal: React.FC = () => {
       clapArmTimerRef.current = null;
     }
   }, [addSystemMessage, speechSupported, startMicMeter, stopMicMeter]);
+
+  useEffect(() => {
+    if (!voiceArmRequestId) return;
+    void armClapWake();
+  }, [armClapWake, voiceArmRequestId]);
 
   const toggleListening = async () => {
     if (clapWakeEnabled) {
