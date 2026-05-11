@@ -24,7 +24,7 @@ View your app in AI Studio: https://ai.studio/apps/bac3a480-e6fc-43a5-98ce-cd3cd
 FRIDAY now supports audible replies and microphone input in browsers with the Web Speech API, such as Chrome or Edge.
 
 - Click the microphone button, allow microphone access, then say: `Friday status`
-- Double-clap wake is enabled by default. Press the mic once to arm it, clap twice, then speak your command. After activation, FRIDAY stays in hands-free conversation mode: it auto-detects your next sentence, records until you pause, answers, and keeps listening. Say or type `sleep` to stand down.
+- Wake phrase mode is enabled by default. Press the mic once to arm it, then say `Friday wake up`. After activation, FRIDAY stays in hands-free conversation mode: it auto-detects your next sentence, records until you pause, answers, and keeps listening. Say or type `sleep` to stand down.
 - Use the ear button to toggle hands-free follow-up detection. If it is off, press the mic for each follow-up turn.
 - Keep the radio button enabled for wake-phrase mode, or turn it off to submit every final voice transcript.
 - Click the speaker button to mute or restore spoken responses.
@@ -38,13 +38,13 @@ On Windows, launch it like a desktop companion:
 .\start-friday.ps1
 ```
 
-To run FRIDAY as a hidden desktop listener that opens when you clap twice:
+To run FRIDAY as a hidden desktop listener that opens when you say `Friday wake up`:
 
 ```powershell
 .\start-friday-desktop.ps1
 ```
 
-In desktop mode, the Electron shell stays alive in the background with a hidden FRIDAY window. The first time it runs, Windows/Electron may request microphone permission. After that, double clap shows the FRIDAY window and starts the first spoken line. Closing the FRIDAY window hides it instead of fully quitting; quit the Electron process to stop background listening.
+In desktop mode, the Electron shell stays alive in the background with a hidden FRIDAY window. The first time it runs, Windows/Electron may request microphone permission. After that, saying `Friday wake up` shows the FRIDAY window and starts the first spoken line. Closing the FRIDAY window hides it instead of fully quitting; quit the Electron process to stop background listening.
 
 To make FRIDAY start when you sign in to Windows:
 
@@ -52,7 +52,7 @@ To make FRIDAY start when you sign in to Windows:
 .\install-friday-startup.ps1
 ```
 
-To make the hidden clap listener start when you sign in to Windows:
+To make the hidden wake phrase listener start when you sign in to Windows:
 
 ```powershell
 .\install-friday-desktop-startup.ps1

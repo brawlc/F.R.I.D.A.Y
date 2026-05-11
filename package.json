@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
-    "desktop": "electron electron/main.cjs",
+    "desktop": "node electron/launch.cjs",
     "start": "NODE_ENV=production node server.mjs",
     "build": "vite build",
     "preview": "vite preview",

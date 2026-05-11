@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI } from '@google/genai';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -14,6 +15,7 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
 const canUseDesktopBridge = process.platform === 'win32' && !process.env.RENDER;
+const gemini = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 const openTargets = {
   instagram: 'https://www.instagram.com/',
@@ -32,7 +34,7 @@ const openTargets = {
   maps: 'https://www.google.com/maps',
 };
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '15mb' }));
 
 app.use('/api/desktop', (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -53,6 +55,72 @@ app.get('/api/desktop/status', (_req, res) => {
     desktopBridge: canUseDesktopBridge,
     platform: process.platform,
   });
+});
+
+app.post('/api/transcribe', async (req, res) => {
+  if (!gemini) {
+    res.status(500).json({
+      ok: false,
+      error: 'GEMINI_API_KEY is missing in .env.local.',
+    });
+    return;
+  }
+
+  const audioBase64 = String(req.body?.audioBase64 || '');
+  const mimeType = String(req.body?.mimeType || 'audio/webm');
+
+  if (!audioBase64) {
+    res.status(400).json({
+      ok: false,
+      error: 'No audio payload received.',
+    });
+    return;
+  }
+
+  try {
+    const response = await gemini.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{
+        role: 'user',
+        parts: [
+          {
+            text: [
+              'Transcribe the entire audio clip exactly as spoken.',
+              'Preserve long sentences, command details, app names, file names, punctuation when clear, and the wake word if it was spoken.',
+              'Do not summarize, shorten, correct intent, add commentary, add labels, add markdown, or wrap the result in quotes.',
+              'Return only the spoken words.'
+            ].join(' ')
+          },
+          {
+            inlineData: {
+              data: audioBase64,
+              mimeType,
+            }
+          }
+        ]
+      }]
+    });
+
+    res.json({
+      ok: true,
+      text: response.text?.trim() || '',
+    });
+  } catch (error) {
+    console.error('Gemini transcription error:', error);
+    let message = error instanceof Error ? error.message : 'Gemini transcription failed.';
+
+    try {
+      const parsed = JSON.parse(message);
+      message = parsed?.error?.message || message;
+    } catch {
+      // Keep the original SDK error message.
+    }
+
+    res.status(500).json({
+      ok: false,
+      error: message,
+    });
+  }
 });
 
 const userProfile = process.env.USERPROFILE || process.env.HOME || '';

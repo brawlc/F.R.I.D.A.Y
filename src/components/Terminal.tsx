@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { Message } from '../types';
 import { TerminalMessage } from './TerminalMessage';
-import { streamFridayResponse, transcribeAudioCommand } from '../services/ai';
+import { getLastTranscriptionError, streamFridayResponse, transcribeAudioCommand } from '../services/ai';
 
 type SpeechMode = 'browser' | 'gemini';
 type LocalCommandResult = string | null;
@@ -30,12 +30,13 @@ type DesktopOpenResult = {
   message?: string;
   url?: string;
 };
-const MAX_GEMINI_RECORDING_MS = 25000;
-const CLAP_ARM_TIMEOUT_MS = 12000;
+const MAX_GEMINI_RECORDING_MS = 9000;
+const WAKE_PHRASE_RECORDING_MS = 3500;
 const CONVERSATION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 const AUTO_SPEECH_START_RMS = 10;
 const AUTO_SPEECH_STOP_RMS = 7;
-const AUTO_SILENCE_STOP_MS = 1300;
+const AUTO_SPEECH_ABOVE_NOISE_RMS = 7;
+const AUTO_SILENCE_STOP_MS = 900;
 const AUTO_RECORD_COOLDOWN_MS = 1200;
 const MIN_AUTO_RECORDING_MS = 900;
 
@@ -99,11 +100,12 @@ export const Terminal: React.FC = () => {
   const [micLevel, setMicLevel] = useState(0);
   const [speechMode, setSpeechMode] = useState<SpeechMode>('browser');
   const [isRecording, setIsRecording] = useState(false);
+  const [isWakePhraseRecording, setIsWakePhraseRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [clapWakeEnabled, setClapWakeEnabled] = useState(() => localStorage.getItem('friday.clapWake') !== 'false');
   const [isClapArmed, setIsClapArmed] = useState(false);
-  const [clapCount, setClapCount] = useState(0);
+  const [clapDebug, setClapDebug] = useState({ peak: 0, rms: 0 });
   const [isConversationActive, setIsConversationActive] = useState(false);
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(() => localStorage.getItem('friday.handsFree') !== 'false');
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -122,13 +124,13 @@ export const Terminal: React.FC = () => {
   const recordingIntervalRef = useRef<number | null>(null);
   const clapArmTimerRef = useRef<number | null>(null);
   const conversationIdleTimerRef = useRef<number | null>(null);
-  const lastClapAtRef = useRef(0);
-  const clapCountRef = useRef(0);
+  const lastAudioDebugAtRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const meterFrameRef = useRef<number | null>(null);
   const shouldListenRef = useRef(false);
   const processingRef = useRef(false);
   const wakeModeRef = useRef(true);
+  const speechModeRef = useRef<SpeechMode>('browser');
   const clapWakeEnabledRef = useRef(clapWakeEnabled);
   const conversationActiveRef = useRef(false);
   const isClapArmedRef = useRef(false);
@@ -138,7 +140,9 @@ export const Terminal: React.FC = () => {
   const voiceDetectedInRecordingRef = useRef(false);
   const silenceStartedAtRef = useRef(0);
   const autoRecordCooldownUntilRef = useRef(0);
-  const triggerClapWakeRef = useRef<() => void>(() => {});
+  const ambientRmsRef = useRef(0);
+  const isWakePhraseRecordingRef = useRef(false);
+  const startWakePhraseRecordingRef = useRef<() => void>(() => {});
   const startHandsFreeRecordingRef = useRef<() => void>(() => {});
   const stopHandsFreeRecordingRef = useRef<() => void>(() => {});
 
@@ -165,12 +169,20 @@ export const Terminal: React.FC = () => {
   }, [isRecording]);
 
   useEffect(() => {
+    isWakePhraseRecordingRef.current = isWakePhraseRecording;
+  }, [isWakePhraseRecording]);
+
+  useEffect(() => {
     isTranscribingRef.current = isTranscribing;
   }, [isTranscribing]);
 
   useEffect(() => {
     wakeModeRef.current = wakeMode;
   }, [wakeMode]);
+
+  useEffect(() => {
+    speechModeRef.current = speechMode;
+  }, [speechMode]);
 
   useEffect(() => {
     clapWakeEnabledRef.current = clapWakeEnabled;
@@ -188,11 +200,11 @@ export const Terminal: React.FC = () => {
       setAvailableVoices(voices);
 
       if (!selectedVoiceURI && voices.length > 0) {
-        const preferredVoice = voices.find(voice => /jenny|aria|sara|samantha|zira|hazel|susan|female|natural|online/i.test(voice.name))
-          || voices.find(voice => voice.lang.toLowerCase().startsWith('en'))
-          || voices[0];
-        setSelectedVoiceURI(preferredVoice.voiceURI);
-      }
+          const preferredVoice = voices.find(voice => /jenny|aria|sara|samantha|zira|hazel|susan|female|natural|online/i.test(voice.name))
+            || voices.find(voice => voice.lang.toLowerCase().startsWith('en'))
+            || voices[0];
+          setSelectedVoiceURI(preferredVoice.voiceURI || preferredVoice.name);
+        }
     };
 
     loadVoices();
@@ -238,7 +250,7 @@ export const Terminal: React.FC = () => {
     utterance.volume = 1;
 
     const voices = availableVoices.length > 0 ? availableVoices : window.speechSynthesis.getVoices();
-    const selectedVoice = voices.find(voice => voice.voiceURI === selectedVoiceURI)
+    const selectedVoice = voices.find(voice => (voice.voiceURI || voice.name) === selectedVoiceURI)
       || voices.find(voice => /jenny|aria|sara|samantha|zira|hazel|susan|female|natural|online/i.test(voice.name));
     if (selectedVoice) utterance.voice = selectedVoice;
 
@@ -277,8 +289,6 @@ export const Terminal: React.FC = () => {
 
     recorderRef.current = null;
     recordingChunksRef.current = [];
-    clapCountRef.current = 0;
-    lastClapAtRef.current = 0;
 
     if (meterFrameRef.current) {
       window.cancelAnimationFrame(meterFrameRef.current);
@@ -293,9 +303,12 @@ export const Terminal: React.FC = () => {
     }
     audioContextRef.current = null;
     setMicLevel(0);
+    setClapDebug({ peak: 0, rms: 0 });
     setRecordingSeconds(0);
+    setIsWakePhraseRecording(false);
+    isWakePhraseRecordingRef.current = false;
+    ambientRmsRef.current = 0;
     setIsClapArmed(false);
-    setClapCount(0);
     setIsConversationActive(false);
   }, []);
 
@@ -345,26 +358,46 @@ export const Terminal: React.FC = () => {
         }
 
         const rms = Math.sqrt(sum / samples.length);
-        setMicLevel(Math.min(100, Math.round(rms * 4)));
+        const previousAmbient = ambientRmsRef.current || rms;
+        const isBusyWithVoice =
+          isRecordingRef.current
+          || isTranscribingRef.current
+          || processingRef.current
+          || (('speechSynthesis' in window) && window.speechSynthesis.speaking);
+        const shouldTrackAmbient =
+          !isBusyWithVoice
+          && (!isClapArmedRef.current || rms < previousAmbient + AUTO_SPEECH_ABOVE_NOISE_RMS);
+
+        if (shouldTrackAmbient) {
+          ambientRmsRef.current = previousAmbient * 0.96 + rms * 0.04;
+        }
+
+        const ambientRms = ambientRmsRef.current || rms;
+        const speechStartRms = Math.max(AUTO_SPEECH_START_RMS, ambientRms + AUTO_SPEECH_ABOVE_NOISE_RMS);
+        const speechStopRms = Math.max(AUTO_SPEECH_STOP_RMS, ambientRms + 2);
+        const relativeRms = Math.max(0, rms - Math.max(0, ambientRms - 2));
+        setMicLevel(Math.min(100, Math.round(relativeRms * 7)));
 
         const now = performance.now();
+        if (isClapArmedRef.current && now - lastAudioDebugAtRef.current > 180) {
+          lastAudioDebugAtRef.current = now;
+          setClapDebug({ peak: Math.round(peak), rms: Math.round(rms) });
+        }
+
         if (
           clapWakeEnabledRef.current
           && isClapArmedRef.current
-          && peak > 82
-          && rms > 18
-          && now - lastClapAtRef.current > 220
+          && speechModeRef.current === 'gemini'
+          && !isRecordingRef.current
+          && !isTranscribingRef.current
+          && !processingRef.current
+          && now > autoRecordCooldownUntilRef.current
+          && !isBusyWithVoice
+          && rms > speechStartRms
         ) {
-          const previousClapAt = lastClapAtRef.current;
-          lastClapAtRef.current = now;
-          clapCountRef.current = now - previousClapAt < 900 ? clapCountRef.current + 1 : 1;
-          setClapCount(clapCountRef.current);
-
-          if (clapCountRef.current >= 2) {
-            clapCountRef.current = 0;
-            setClapCount(0);
-            triggerClapWakeRef.current();
-          }
+          autoRecordCooldownUntilRef.current = now + WAKE_PHRASE_RECORDING_MS + 900;
+          setVoiceStatus('Checking wake phrase');
+          startWakePhraseRecordingRef.current();
         }
 
         if (
@@ -375,8 +408,8 @@ export const Terminal: React.FC = () => {
           && !isTranscribingRef.current
           && !processingRef.current
           && now > autoRecordCooldownUntilRef.current
-          && (!('speechSynthesis' in window) || !window.speechSynthesis.speaking)
-          && rms > AUTO_SPEECH_START_RMS
+          && !isBusyWithVoice
+          && rms > speechStartRms
         ) {
           setVoiceStatus('Speech detected');
           startHandsFreeRecordingRef.current();
@@ -385,15 +418,13 @@ export const Terminal: React.FC = () => {
         if (isRecordingRef.current) {
           const elapsed = now - recordingStartedAtRef.current;
 
-          if (rms > AUTO_SPEECH_START_RMS) {
+          if (rms > speechStartRms) {
             voiceDetectedInRecordingRef.current = true;
             silenceStartedAtRef.current = 0;
           } else if (
-            handsFreeEnabled
-            && conversationActiveRef.current
-            && voiceDetectedInRecordingRef.current
+            voiceDetectedInRecordingRef.current
             && elapsed > MIN_AUTO_RECORDING_MS
-            && rms < AUTO_SPEECH_STOP_RMS
+            && rms < speechStopRms
           ) {
             if (!silenceStartedAtRef.current) silenceStartedAtRef.current = now;
             if (now - silenceStartedAtRef.current > AUTO_SILENCE_STOP_MS) {
@@ -429,12 +460,11 @@ export const Terminal: React.FC = () => {
     reader.readAsDataURL(blob);
   });
 
-  const endConversation = useCallback((status = 'Clap wake idle') => {
+  const endConversation = useCallback((status = 'Wake phrase idle') => {
     conversationActiveRef.current = false;
     setIsConversationActive(false);
     setIsClapArmed(false);
     isClapArmedRef.current = false;
-    setClapCount(0);
     setVoiceStatus(status);
     stopMicMeter();
   }, [stopMicMeter]);
@@ -520,7 +550,7 @@ export const Terminal: React.FC = () => {
     }
 
     if (cmd === 'help') {
-      return `AVAILABLE SYSTEM COMMANDS:\n- open instagram/youtube/google/gmail/whatsapp/chatgpt/github: Open site in browser\n- open notepad/calculator/camera/settings/explorer/downloads/documents/desktop/vscode: Open approved local apps and folders\n- clear/cls: Clear the terminal screen\n- time: Display system clock\n- help: Show this menu\n- status: Diagnostic overview\n- listen: Enable voice input\n- stop listening: Disable voice input\n- sleep/stand down/go idle: End active conversation\n- mute/unmute: Toggle spoken responses\n\nVoice: Hand icon controls double-clap wake. Ear icon controls hands-free follow-up. With both on, press mic once, clap twice, then speak naturally until sleep or timeout.`;
+      return `AVAILABLE SYSTEM COMMANDS:\n- open instagram/youtube/google/gmail/whatsapp/chatgpt/github: Open site in browser\n- open notepad/calculator/camera/settings/explorer/downloads/documents/desktop/vscode: Open approved local apps and folders\n- clear/cls: Clear the terminal screen\n- time: Display system clock\n- help: Show this menu\n- status: Diagnostic overview\n- listen: Enable voice input\n- stop listening: Disable voice input\n- sleep/stand down/go idle: End active conversation\n- mute/unmute: Toggle spoken responses\n\nVoice: Hand icon controls the "Friday wake up" wake phrase. Ear icon controls hands-free follow-up. With both on, FRIDAY can wake from standby, answer, and keep listening until sleep or timeout.`;
     }
 
     if (cmd === 'status') {
@@ -540,7 +570,7 @@ export const Terminal: React.FC = () => {
 
     if (cmd === 'sleep' || cmd === 'stand down' || cmd === 'go idle') {
       endConversation('Conversation idle.');
-      return 'Standing down. Clap twice when you need me again.';
+      return 'Standing down. Say Friday wake up when you need me again.';
     }
 
     if (cmd === 'mute') {
@@ -557,6 +587,10 @@ export const Terminal: React.FC = () => {
   }, [endConversation, speechSupported]);
 
   const normalizeVoiceCommand = (rawText: string) => rawText.replace(/[^\p{L}\p{N}\s?!.,"'-]/gu, '').trim();
+  const isFridayWakeUpPhrase = (rawText: string) => {
+    const normalized = normalizeVoiceCommand(rawText).toLowerCase();
+    return /\bfriday\b/.test(normalized) && /\b(wake up|wakeup|activate|online|start listening)\b/.test(normalized);
+  };
 
   const handleSendText = useCallback(async (rawText: string) => {
     const text = rawText.trim();
@@ -655,14 +689,15 @@ export const Terminal: React.FC = () => {
     stopHandsFreeRecordingRef.current = stopGeminiRecording;
   }, [stopGeminiRecording]);
 
-  const startGeminiRecording = useCallback(async () => {
+  const startGeminiRecording = useCallback(async (wakePhraseCheck = false) => {
+    if (isRecordingRef.current || isTranscribingRef.current) return;
+
     if (clapArmTimerRef.current) {
       window.clearTimeout(clapArmTimerRef.current);
       clapArmTimerRef.current = null;
     }
     isClapArmedRef.current = false;
     setIsClapArmed(false);
-    setClapCount(0);
 
     const micReady = mediaStreamRef.current || await startMicMeter();
     if (!micReady || !mediaStreamRef.current) return;
@@ -685,6 +720,8 @@ export const Terminal: React.FC = () => {
 
     recorder.onstop = async () => {
       setIsRecording(false);
+      setIsWakePhraseRecording(false);
+      isWakePhraseRecordingRef.current = false;
       setIsTranscribing(true);
       setRecordingSeconds(0);
       setVoiceStatus('Transcribing with Gemini');
@@ -699,11 +736,34 @@ export const Terminal: React.FC = () => {
 
         const audioBase64 = await blobToBase64(blob);
         const transcript = await transcribeAudioCommand(audioBase64, mimeType);
+
+        if (wakePhraseCheck) {
+          setLiveTranscript(transcript || '');
+
+          if (transcript && isFridayWakeUpPhrase(transcript)) {
+            conversationActiveRef.current = true;
+            setIsConversationActive(true);
+            refreshConversationIdleTimer();
+            autoRecordCooldownUntilRef.current = performance.now() + 900;
+            setVoiceStatus('Wake phrase detected');
+            window.fridayDesktop?.showWindow();
+            speak('FRIDAY online. How can I help, Sir?');
+          } else {
+            setVoiceStatus(transcript ? 'Standby: say "Friday wake up"' : 'Wake phrase not heard');
+            if (transcript) addSystemMessage(`HEARD DURING WAKE CHECK: ${transcript}`);
+            if (!transcript && getLastTranscriptionError()) {
+              addSystemMessage(`WAKE TRANSCRIPTION FAILED\n${getLastTranscriptionError()}`);
+            }
+          }
+
+          return;
+        }
+
         const command = stripWakePhrase(transcript);
 
         if (!transcript) {
           setVoiceStatus('No transcript returned');
-          addSystemMessage('GEMINI TRANSCRIPTION RETURNED EMPTY\nCheck GEMINI_API_KEY in .env.local, internet access, and speak clearly for 2-25 seconds.');
+          addSystemMessage(`GEMINI TRANSCRIPTION RETURNED EMPTY\n${getLastTranscriptionError() || 'Check GEMINI_API_KEY in .env.local, internet access, and speak clearly for 2-25 seconds.'}`);
           return;
         }
 
@@ -719,6 +779,15 @@ export const Terminal: React.FC = () => {
         await handleSendText(command);
       } finally {
         setIsTranscribing(false);
+
+        if (wakePhraseCheck && !conversationActiveRef.current) {
+          isClapArmedRef.current = true;
+          setIsClapArmed(true);
+          autoRecordCooldownUntilRef.current = performance.now() + 900;
+          setVoiceStatus('Standby: say "Friday wake up"');
+          return;
+        }
+
         if (conversationActiveRef.current) {
           refreshConversationIdleTimer();
           autoRecordCooldownUntilRef.current = performance.now() + AUTO_RECORD_COOLDOWN_MS;
@@ -735,13 +804,22 @@ export const Terminal: React.FC = () => {
     voiceDetectedInRecordingRef.current = false;
     silenceStartedAtRef.current = 0;
     setIsRecording(true);
+    setIsWakePhraseRecording(wakePhraseCheck);
+    isWakePhraseRecordingRef.current = wakePhraseCheck;
     setRecordingSeconds(0);
-    setVoiceStatus('Recording command');
+    setVoiceStatus(wakePhraseCheck ? 'Listening for wake phrase' : 'Recording command');
     recordingIntervalRef.current = window.setInterval(() => {
-      setRecordingSeconds(seconds => Math.min(Math.ceil(MAX_GEMINI_RECORDING_MS / 1000), seconds + 1));
+      const maxSeconds = Math.ceil((wakePhraseCheck ? WAKE_PHRASE_RECORDING_MS : MAX_GEMINI_RECORDING_MS) / 1000);
+      setRecordingSeconds(seconds => Math.min(maxSeconds, seconds + 1));
     }, 1000);
-    recordingTimerRef.current = window.setTimeout(stopGeminiRecording, MAX_GEMINI_RECORDING_MS);
-  }, [addSystemMessage, handleSendText, handsFreeEnabled, refreshConversationIdleTimer, startMicMeter, stopGeminiRecording, stopMicMeter, stripWakePhrase]);
+    recordingTimerRef.current = window.setTimeout(stopGeminiRecording, wakePhraseCheck ? WAKE_PHRASE_RECORDING_MS : MAX_GEMINI_RECORDING_MS);
+  }, [addSystemMessage, handleSendText, handsFreeEnabled, refreshConversationIdleTimer, speak, startMicMeter, stopGeminiRecording, stopMicMeter, stripWakePhrase]);
+
+  useEffect(() => {
+    startWakePhraseRecordingRef.current = () => {
+      void startGeminiRecording(true);
+    };
+  }, [startGeminiRecording]);
 
   useEffect(() => {
     startHandsFreeRecordingRef.current = () => {
@@ -749,53 +827,45 @@ export const Terminal: React.FC = () => {
     };
   }, [startGeminiRecording]);
 
-  useEffect(() => {
-    triggerClapWakeRef.current = () => {
-      conversationActiveRef.current = true;
-      setIsConversationActive(true);
-      refreshConversationIdleTimer();
-      autoRecordCooldownUntilRef.current = performance.now() + 350;
-      setVoiceStatus('Double clap detected');
-      window.fridayDesktop?.showWindow();
-      speak('FRIDAY online. How can I help, Sir?');
-      void startGeminiRecording();
-    };
-  }, [refreshConversationIdleTimer, speak, startGeminiRecording]);
-
   const armClapWake = useCallback(async () => {
+    if (!speechSupported) {
+      setSpeechMode('browser');
+      setVoiceStatus('Browser speech recognition unavailable');
+      addSystemMessage('LOCAL VOICE MODE NEEDS BROWSER SPEECH RECOGNITION\nGemini STT is disabled. Use Microsoft Edge or Chrome speech recognition, or install a native offline STT runtime later.');
+      return;
+    }
+
     const micReady = await startMicMeter();
     if (!micReady) return;
 
-    setSpeechMode('gemini');
+    setSpeechMode('browser');
     setLiveTranscript('');
     setIsClapArmed(true);
     isClapArmedRef.current = true;
-    clapCountRef.current = 0;
-    lastClapAtRef.current = 0;
-    setClapCount(0);
-    setVoiceStatus('Clap twice to activate');
-    speak('Clap wake armed.');
+    setClapDebug({ peak: 0, rms: 0 });
+    setVoiceStatus(speechSupported ? 'Listening for "Friday wake up"' : 'Say "Friday wake up" to activate');
+    if (!isDesktopShell) speak('Wake phrase armed.');
 
-    if (clapArmTimerRef.current) window.clearTimeout(clapArmTimerRef.current);
-    clapArmTimerRef.current = window.setTimeout(() => {
-      isClapArmedRef.current = false;
-      setIsClapArmed(false);
-      setClapCount(0);
-      setVoiceStatus('Clap wake idle');
-      stopMicMeter();
-    }, CLAP_ARM_TIMEOUT_MS);
-  }, [speak, startMicMeter, stopMicMeter]);
+    if (speechSupported) {
+      shouldListenRef.current = true;
+      setIsListening(true);
+    }
+
+    if (clapArmTimerRef.current) {
+      window.clearTimeout(clapArmTimerRef.current);
+      clapArmTimerRef.current = null;
+    }
+  }, [addSystemMessage, isDesktopShell, speak, speechSupported, startMicMeter, stopMicMeter]);
 
   useEffect(() => {
-    if (!isDesktopShell || !clapWakeEnabled) return;
+    if (!clapWakeEnabled || isListening || isRecording || isTranscribing || isConversationActive) return;
 
     const timer = window.setTimeout(() => {
       void armClapWake();
-      setVoiceStatus('Desktop standby: clap twice');
-    }, 1200);
+    }, 700);
 
     return () => window.clearTimeout(timer);
-  }, [armClapWake, clapWakeEnabled, isDesktopShell]);
+  }, [armClapWake, clapWakeEnabled, isConversationActive, isListening, isRecording, isTranscribing]);
 
   const toggleListening = async () => {
     if (clapWakeEnabled) {
@@ -805,26 +875,27 @@ export const Terminal: React.FC = () => {
       }
 
       if (isConversationActive) {
-        await startGeminiRecording();
+        if (!speechSupported) {
+          setVoiceStatus('Browser speech recognition unavailable');
+          addSystemMessage('VOICE COMMANDS UNAVAILABLE\nGemini STT is disabled, and this browser is not exposing speech recognition.');
+          return;
+        }
+
+        setSpeechMode('browser');
+        shouldListenRef.current = true;
+        setIsListening(true);
+        setVoiceStatus('Listening');
         return;
       }
 
       if (isClapArmed) {
-        endConversation('Clap wake idle');
+        shouldListenRef.current = false;
+        setIsListening(false);
+        endConversation('Wake phrase idle');
         return;
       }
 
       await armClapWake();
-      return;
-    }
-
-    if (speechMode === 'gemini') {
-      if (isRecording) {
-        stopGeminiRecording();
-        return;
-      }
-
-      await startGeminiRecording();
       return;
     }
 
@@ -841,9 +912,9 @@ export const Terminal: React.FC = () => {
     if (!micReady) return;
 
     if (!speechSupported) {
-      setSpeechMode('gemini');
-      setVoiceStatus('Gemini record mode ready');
-      addSystemMessage('BROWSER SPEECH RECOGNITION UNAVAILABLE\nSwitched to Gemini transcription. Press the mic, speak a short command, then press it again.');
+      setSpeechMode('browser');
+      setVoiceStatus('Browser speech recognition unavailable');
+      addSystemMessage('BROWSER SPEECH RECOGNITION UNAVAILABLE\nGemini STT is disabled. Use Edge/Chrome speech recognition, or install a native offline STT runtime later.');
       return;
     }
 
@@ -876,14 +947,35 @@ export const Terminal: React.FC = () => {
           const normalized = cleanedTranscript.toLowerCase();
           let command = cleanedTranscript;
 
+          if (clapWakeEnabledRef.current && isClapArmedRef.current) {
+            setLiveTranscript(cleanedTranscript);
+
+            if (isFridayWakeUpPhrase(cleanedTranscript)) {
+              conversationActiveRef.current = true;
+              setIsConversationActive(true);
+              setIsClapArmed(false);
+              isClapArmedRef.current = false;
+              refreshConversationIdleTimer();
+              setVoiceStatus('Wake phrase detected');
+              window.fridayDesktop?.showWindow();
+              speak('FRIDAY online. How can I help, Sir?');
+            } else {
+              setVoiceStatus('Listening for "Friday wake up"');
+            }
+
+            continue;
+          }
+
           if (wakeModeRef.current) {
-            const wakeIndex = normalized.indexOf('friday');
-            if (wakeIndex === -1) {
+            const wakeIndex = conversationActiveRef.current ? -1 : normalized.indexOf('friday');
+            if (!conversationActiveRef.current && wakeIndex === -1) {
               setVoiceStatus(`Mic active; say "Friday" first`);
               continue;
             }
 
-            command = cleanedTranscript.slice(wakeIndex + 'friday'.length).trim();
+            command = conversationActiveRef.current
+              ? cleanedTranscript
+              : cleanedTranscript.slice(wakeIndex + 'friday'.length).trim();
           }
 
           if (command) {
@@ -904,9 +996,9 @@ export const Terminal: React.FC = () => {
       if (event.error === 'network') {
         shouldListenRef.current = false;
         setIsListening(false);
-        setSpeechMode('gemini');
-        setVoiceStatus('Gemini record mode ready');
-        addSystemMessage('VOICE ENGINE NETWORK FAILURE\nThe microphone is on, but Chrome/Edge could not reach its speech-to-text service. Switched to Gemini transcription mode: press the mic, speak, then press it again.');
+        setSpeechMode('browser');
+        setVoiceStatus('Browser speech service unavailable');
+        addSystemMessage('BROWSER SPEECH SERVICE FAILED\nGemini STT is disabled, so FRIDAY will not fall back to quota-limited transcription. Try Edge/Chrome again, or we can add a native offline runtime once the Windows build tools are available.');
         stopMicMeter();
         return;
       }
@@ -997,7 +1089,7 @@ export const Terminal: React.FC = () => {
             onClick={toggleListening}
             disabled={!micSupported || isTranscribing}
             className={`h-9 w-9 inline-flex items-center justify-center rounded border transition-colors ${isListening || isRecording || isClapArmed || isConversationActive ? 'border-terminal-green text-terminal-green bg-terminal-green/10' : 'border-terminal-border text-terminal-accent hover:bg-terminal-accent/10'} disabled:cursor-not-allowed disabled:opacity-40`}
-            title={clapWakeEnabled ? isConversationActive ? 'Record next conversation turn' : 'Arm double-clap wake' : speechMode === 'gemini' ? 'Record Gemini voice command' : isListening ? 'Stop voice input' : 'Start voice input'}
+            title={clapWakeEnabled ? isConversationActive ? 'Listen for next conversation turn' : 'Arm Friday wake up' : isListening ? 'Stop voice input' : 'Start browser voice input'}
           >
             {isClapArmed ? <Hand size={16} /> : isListening || isRecording ? <Mic size={16} /> : <MicOff size={16} />}
           </button>
@@ -1019,13 +1111,24 @@ export const Terminal: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => {
-              setClapWakeEnabled(prev => !prev);
+            onClick={async () => {
+              const nextEnabled = !clapWakeEnabled;
+              setClapWakeEnabled(nextEnabled);
               stopMicMeter();
-              setVoiceStatus(clapWakeEnabled ? 'Manual voice mode' : 'Double clap mode');
+              shouldListenRef.current = false;
+              setIsListening(false);
+
+              if (nextEnabled) {
+                setVoiceStatus('Arming wake phrase');
+                window.setTimeout(() => {
+                  void armClapWake();
+                }, 150);
+              } else {
+                setVoiceStatus('Manual voice mode');
+              }
             }}
             className={`h-9 w-9 inline-flex items-center justify-center rounded border transition-colors ${clapWakeEnabled ? 'border-terminal-green text-terminal-green bg-terminal-green/10' : 'border-terminal-border text-terminal-text/60 hover:bg-white/5'}`}
-            title={clapWakeEnabled ? 'Double-clap wake on' : 'Double-clap wake off'}
+            title={clapWakeEnabled ? 'Friday wake up on' : 'Friday wake up off'}
           >
             <Hand size={16} />
           </button>
@@ -1049,9 +1152,10 @@ export const Terminal: React.FC = () => {
             <span className="text-terminal-accent/80">{voiceStatus}</span>
             {isConversationActive && !isRecording && <span className="ml-3 text-terminal-green">Active</span>}
             {isConversationActive && handsFreeEnabled && !isRecording && <span className="ml-3 text-terminal-green/70">Auto</span>}
-            {isRecording && <span className="ml-3 text-terminal-green">{recordingSeconds}s / {MAX_GEMINI_RECORDING_MS / 1000}s</span>}
-            {isClapArmed && <span className="ml-3 text-terminal-green">{clapCount}/2 claps</span>}
-            <span className="ml-3 text-terminal-green/70">{speechMode === 'gemini' ? 'Gemini STT' : 'Browser STT'}</span>
+            {isRecording && <span className="ml-3 text-terminal-green">{recordingSeconds}s / {isWakePhraseRecording ? WAKE_PHRASE_RECORDING_MS / 1000 : MAX_GEMINI_RECORDING_MS / 1000}s</span>}
+            {isClapArmed && <span className="ml-3 text-terminal-green">wake armed</span>}
+            {isClapArmed && <span className="ml-3 text-terminal-text/40">peak {clapDebug.peak} rms {clapDebug.rms}</span>}
+            <span className="ml-3 text-terminal-green/70">No-Gemini Browser STT</span>
             {liveTranscript && <span className="ml-3 normal-case tracking-normal text-terminal-text/50">{liveTranscript}</span>}
           </div>
           <div className="h-2 w-28 overflow-hidden rounded bg-terminal-border" title="Microphone input level">
@@ -1071,11 +1175,14 @@ export const Terminal: React.FC = () => {
               title="FRIDAY voice"
             >
               {availableVoices.length === 0 && <option value="">System default voice</option>}
-              {availableVoices.map(voice => (
-                <option key={voice.voiceURI} value={voice.voiceURI}>
-                  {voice.name} ({voice.lang})
-                </option>
-              ))}
+              {availableVoices.map(voice => {
+                const id = voice.voiceURI || voice.name;
+                return (
+                  <option key={id} value={id}>
+                    {voice.name} ({voice.lang})
+                  </option>
+                );
+              })}
             </select>
             <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-terminal-text/60">
               Rate
@@ -1103,7 +1210,7 @@ export const Terminal: React.FC = () => {
             </label>
             <button
               type="button"
-              onClick={() => speak('Voice calibration complete. FRIDAY is online and listening for your double clap, Sir.')}
+              onClick={() => speak('Voice calibration complete. FRIDAY is online and listening for Friday wake up, Sir.')}
               className="h-9 rounded border border-terminal-accent px-3 font-mono text-xs uppercase tracking-wider text-terminal-accent hover:bg-terminal-accent/10"
             >
               Test
