@@ -671,7 +671,16 @@ export const Terminal: React.FC = () => {
       return `AVAILABLE SYSTEM COMMANDS:\n- open instagram/youtube/google/gmail/whatsapp/chatgpt/github/jio hotstar: Open site in browser\n- open notepad/calculator/camera/settings/explorer/downloads/documents/desktop/vscode: Open approved local apps and folders\n- clear/cls: Clear the terminal screen\n- time: Display system clock\n- help: Show this menu\n- status: Diagnostic overview\n- listen: Enable voice input\n- stop listening: Disable voice input\n- sleep/stand down/go idle: End active conversation\n- mute/unmute: Toggle spoken responses\n\nVoice: Hand icon controls the "Friday wake up" wake phrase. Ear icon controls hands-free follow-up. With both on, FRIDAY can wake from standby, answer, and keep listening until sleep or timeout.`;
     }
 
-    if (cmd === 'status' || cmd === 'system checks' || cmd === 'do system checks' || cmd.includes('do system checks')) {
+    if (
+      cmd === 'status'
+      || cmd === 'stats'
+      || cmd === 'stat'
+      || cmd === 'system checks'
+      || cmd === 'do system checks'
+      || cmd.includes('do system checks')
+      || cmd.includes('give me stats')
+      || cmd.includes('give me status')
+    ) {
       return `SYSTEM DIAGNOSTICS [OK]\nCORE TEMPERATURE: 38 C\nMEMORY USAGE: 2.1GB / 64GB\nNETWORK: SECURE_LINK_PRO\nAI MODEL: GEMINI_FLASH_3.0\nVOICE INPUT: ${speechSupported ? 'AVAILABLE' : 'UNSUPPORTED'}\nAUDIO OUTPUT: ${'speechSynthesis' in window ? 'AVAILABLE' : 'UNSUPPORTED'}\nINTEGRITY: 100%`;
     }
 
