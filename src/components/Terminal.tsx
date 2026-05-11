@@ -1130,6 +1130,12 @@ export const Terminal: React.FC = () => {
               const wakeCommand = isFridayWakeUpPhrase(cleanedTranscript)
                 ? stripFridayWakeUpPhrase(cleanedTranscript)
                 : stripFridayAddress(cleanedTranscript);
+
+              if (!hasCommandText(wakeCommand) && !isFridayWakeUpPhrase(cleanedTranscript)) {
+                setVoiceStatus('Say full command: "Friday open YouTube"');
+                continue;
+              }
+
               conversationActiveRef.current = true;
               setIsConversationActive(true);
               setIsClapArmed(false);
