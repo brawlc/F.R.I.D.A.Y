@@ -146,6 +146,7 @@ export const Terminal: React.FC = () => {
   const speechResumeTimerRef = useRef<number | null>(null);
   const assistantSpeakingRef = useRef(false);
   const speechSuppressionUntilRef = useRef(0);
+  const lastMicFailureRef = useRef({ name: '', at: 0 });
   const startWakePhraseRecordingRef = useRef<() => void>(() => {});
   const startHandsFreeRecordingRef = useRef<() => void>(() => {});
   const stopHandsFreeRecordingRef = useRef<() => void>(() => {});
@@ -505,8 +506,29 @@ export const Terminal: React.FC = () => {
       return true;
     } catch (error) {
       const name = error instanceof DOMException ? error.name : 'unknown';
-      setVoiceStatus(name === 'NotAllowedError' ? 'Microphone permission blocked' : `Microphone error: ${name}`);
-      addSystemMessage(`MICROPHONE CHECK FAILED\n${name === 'NotAllowedError' ? 'Allow microphone access from the browser address bar, then press the mic button again.' : `Browser returned: ${name}`}`);
+      const micErrorHelp: Record<string, string> = {
+        NotFoundError: 'No microphone device was found. Check Windows Settings > System > Sound > Input, connect or enable a microphone, then reload this tab.',
+        DevicesNotFoundError: 'No microphone device was found. Check Windows Settings > System > Sound > Input, connect or enable a microphone, then reload this tab.',
+        NotAllowedError: 'Microphone permission is blocked. Allow microphone access from the browser address bar, then press the mic button again.',
+        SecurityError: 'Microphone access is blocked for this page. Allow microphone access in the browser site settings, then reload.',
+        NotReadableError: 'The microphone is busy or unavailable. Close other apps using the mic, then try again.',
+        TrackStartError: 'The microphone is busy or unavailable. Close other apps using the mic, then try again.',
+        OverconstrainedError: 'The selected microphone does not support the requested audio settings. Try a different input device.',
+      };
+      const help = micErrorHelp[name] || `Browser returned: ${name}`;
+      const now = Date.now();
+
+      shouldListenRef.current = false;
+      setIsListening(false);
+      setIsClapArmed(false);
+      isClapArmedRef.current = false;
+      setVoiceStatus(name === 'NotFoundError' || name === 'DevicesNotFoundError' ? 'No microphone found' : `Microphone error: ${name}`);
+
+      if (lastMicFailureRef.current.name !== name || now - lastMicFailureRef.current.at > 10000) {
+        lastMicFailureRef.current = { name, at: now };
+        addSystemMessage(`MICROPHONE CHECK FAILED\n${help}`);
+      }
+
       return false;
     }
   }, [addSystemMessage, handsFreeEnabled, stopMicMeter]);
