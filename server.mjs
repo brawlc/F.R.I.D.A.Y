@@ -157,17 +157,26 @@ app.post('/api/chat', async (req, res) => {
   }
 
   try {
-    const webContext = await getWebContextForPrompt(text);
-    const promptText = webContext
+    const webSearch = await getWebContextForPrompt(text);
+    const promptText = webSearch.context
       ? [
           text,
           '',
+          `CURRENT DATE: ${new Date().toISOString().slice(0, 10)}`,
           'WEB SEARCH CONTEXT',
           'Use these Google Custom Search results when they help answer the user. Prefer the listed source URLs for current facts. If the results are weak or unrelated, say so briefly instead of pretending certainty.',
-          webContext,
+          webSearch.context,
           '',
           'When using web results, include a short Sources section with the URLs you relied on.'
         ].join('\n')
+      : webSearch.attempted
+        ? [
+            text,
+            '',
+            `CURRENT DATE: ${new Date().toISOString().slice(0, 10)}`,
+            `WEB SEARCH STATUS: unavailable. ${webSearch.error || 'No results were returned.'}`,
+            'If the user asked for current, latest, or research-backed information, say that live web search is not available right now and do not invent current facts.'
+          ].join('\n')
       : text;
 
     const response = await gemini.models.generateContent({
@@ -215,8 +224,14 @@ function formatSearchResult(item, index) {
 }
 
 async function getWebContextForPrompt(text) {
-  if (!shouldUseWebSearch(text)) return '';
-  if (!googleSearchApiKey || !googleSearchEngineId) return '';
+  if (!shouldUseWebSearch(text)) return { attempted: false, context: '', error: '' };
+  if (!googleSearchApiKey || !googleSearchEngineId) {
+    return {
+      attempted: true,
+      context: '',
+      error: 'Google Search environment variables are missing.',
+    };
+  }
 
   const params = new URLSearchParams({
     key: googleSearchApiKey,
@@ -233,19 +248,23 @@ async function getWebContextForPrompt(text) {
     const result = await response.json().catch(() => null);
 
     if (!response.ok) {
-      console.error('Google Custom Search error:', result?.error?.message || response.statusText);
-      return '';
+      const error = result?.error?.message || response.statusText;
+      console.error('Google Custom Search error:', error);
+      return { attempted: true, context: '', error };
     }
 
     const items = Array.isArray(result?.items) ? result.items : [];
-    return items
+    const context = items
       .filter(item => item?.link)
       .slice(0, 5)
       .map(formatSearchResult)
       .join('\n\n');
+
+    return { attempted: true, context, error: '' };
   } catch (error) {
     console.error('Google Custom Search request failed:', error);
-    return '';
+    const message = error instanceof Error ? error.message : 'Google Custom Search request failed.';
+    return { attempted: true, context: '', error: message };
   }
 }
 

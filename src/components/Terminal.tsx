@@ -887,6 +887,8 @@ export const Terminal: React.FC = () => {
             autoRecordCooldownUntilRef.current = performance.now() + 900;
             setVoiceStatus('Wake phrase detected');
             window.fridayDesktop?.showWindow();
+            addSystemMessage('WAKE PHRASE DETECTED\nConversation active. Ask your question now, or type in the command line below.');
+            inputRef.current?.focus();
             speak('FRIDAY online. How can I help, Sir?');
           } else {
             setVoiceStatus(transcript ? 'Standby: say "Friday wake up"' : 'Wake phrase not heard');
@@ -1092,6 +1094,8 @@ export const Terminal: React.FC = () => {
               refreshConversationIdleTimer();
               setVoiceStatus('Wake phrase detected');
               window.fridayDesktop?.showWindow();
+              addSystemMessage('WAKE PHRASE DETECTED\nConversation active. Ask your question now, or type in the command line below.');
+              inputRef.current?.focus();
               speak('FRIDAY online. How can I help, Sir?');
             } else if (/\bfriday\b/.test(normalized)) {
               const wakeIndex = normalized.indexOf('friday');
