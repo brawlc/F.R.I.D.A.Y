@@ -10,3 +10,7 @@ services:
         value: production
       - key: GEMINI_API_KEY
         sync: false
+      - key: GOOGLE_SEARCH_API_KEY
+        sync: false
+      - key: GOOGLE_SEARCH_ENGINE_ID
+        sync: false
