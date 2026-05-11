@@ -59,6 +59,15 @@ app.get('/api/desktop/status', (_req, res) => {
   });
 });
 
+app.get('/api/health', (_req, res) => {
+  res.json({
+    ok: true,
+    service: 'friday-ai',
+    googleSearchConfigured: Boolean(googleSearchApiKey && googleSearchEngineId),
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.post('/api/transcribe', async (req, res) => {
   if (!gemini) {
     res.status(500).json({
