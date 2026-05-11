@@ -1,0 +1,8 @@
+{
+  "name": "FRIDAY AI",
+  "description": "Futuristic AI Assistant inspired by Tony Stark's FRIDAY. A calm, sharp, terminal-based companion for project planning and automation.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}

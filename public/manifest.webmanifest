@@ -1,0 +1,11 @@
+{
+  "name": "FRIDAY AI",
+  "short_name": "FRIDAY",
+  "description": "Desktop voice command interface for FRIDAY AI.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0C0C0C",
+  "theme_color": "#0C0C0C",
+  "icons": []
+}
