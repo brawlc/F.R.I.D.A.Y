@@ -17,7 +17,7 @@ View your app in AI Studio: https://ai.studio/apps/bac3a480-e6fc-43a5-98ce-cd3cd
    `npm install`
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
-   `npm run dev`
+   `npm run desktop`
 
 ## Desktop Voice Mode
 
@@ -37,6 +37,8 @@ On Windows, launch it like a desktop companion:
 ```powershell
 .\start-friday.ps1
 ```
+
+This opens FRIDAY in its own Electron desktop window and starts the local server behind it. Use `npm run dev` only when you specifically want the browser-based development server.
 
 To run FRIDAY as a hidden desktop listener that opens when you say `Friday wake up`:
 

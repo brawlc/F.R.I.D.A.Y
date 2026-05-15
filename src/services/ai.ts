@@ -6,7 +6,7 @@ export function getLastTranscriptionError() {
   return lastTranscriptionError;
 }
 
-function cleanGeminiError(message: string, label = 'Gemini') {
+function cleanProviderError(message: string, label = 'AI provider') {
   try {
     const parsed = JSON.parse(message);
     message = parsed?.error?.message || message;
@@ -26,6 +26,24 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
   lastTranscriptionError = '';
 
   try {
+    if (mimeType === 'audio/wav') {
+      const wavResponse = await fetch('/api/transcribe-wav', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audioBase64, mimeType }),
+      });
+
+      if (wavResponse.ok) {
+        const result = await wavResponse.json() as { ok?: boolean; text?: string };
+        return result.text?.trim() || '';
+      }
+
+      const result = await wavResponse.json().catch(() => null) as { error?: string } | null;
+      lastTranscriptionError = result?.error || wavResponse.statusText || 'Windows WAV transcription failed.';
+      console.error('Local WAV transcription error:', lastTranscriptionError);
+      return '';
+    }
+
     const localResponse = await fetch('/api/transcribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -38,7 +56,7 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
     }
 
     const result = await localResponse.json().catch(() => null) as { error?: string } | null;
-    lastTranscriptionError = cleanGeminiError(result?.error || localResponse.statusText, 'Gemini transcription');
+    lastTranscriptionError = cleanProviderError(result?.error || localResponse.statusText, 'Gemini transcription');
     console.error('Local transcription error:', lastTranscriptionError);
     return '';
   } catch (error) {
@@ -50,10 +68,14 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
 }
 
 export async function* streamFridayResponse(messages: { role: 'user' | 'assistant' | 'system', content: string }[]) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 45000);
+
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         messages,
         systemInstruction: FRIDAY_SYSTEM_PROMPT,
@@ -63,14 +85,20 @@ export async function* streamFridayResponse(messages: { role: 'user' | 'assistan
     const result = await response.json().catch(() => null) as { ok?: boolean; text?: string; error?: string } | null;
 
     if (!response.ok || !result?.ok) {
-      const error = cleanGeminiError(result?.error || response.statusText || 'FRIDAY server request failed.', 'Gemini chat');
-      yield `I cannot reach the Gemini server right now: ${error}`;
+      const error = cleanProviderError(result?.error || response.statusText || 'FRIDAY server request failed.', 'Ollama local mind');
+      yield `I cannot reach Ollama right now: ${error}`;
       return;
     }
 
-    yield result.text?.trim() || 'I did not receive a response from Gemini.';
+    yield result.text?.trim() || 'I did not receive a response from Ollama.';
   } catch (error) {
-    console.error("Gemini Error:", error);
-    yield "I cannot reach the FRIDAY server right now. Check the Render service and network connection.";
+    console.error("FRIDAY local mind error:", error);
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      yield "The FRIDAY server took too long to answer. I released the console so you can type again.";
+      return;
+    }
+    yield "I cannot reach the FRIDAY server right now. Check the local server and Ollama.";
+  } finally {
+    window.clearTimeout(timeout);
   }
 }

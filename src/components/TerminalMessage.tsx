@@ -24,7 +24,7 @@ export const TerminalMessage: React.FC<TerminalMessageProps> = ({ message }) => 
 
   const getPrefix = () => {
     if (isUser) return <span className="text-terminal-accent mr-2">C:\Users\BOSS&gt;</span>;
-    if (isFriday) return <span className="text-terminal-green mr-2">[FRIDAY]</span>;
+    if (isFriday) return <span className="text-terminal-green mr-2">[F.R.I.D.A.Y]</span>;
     if (isSystem) return <span className="text-yellow-500 mr-2">[SYSTEM]</span>;
     return null;
   };

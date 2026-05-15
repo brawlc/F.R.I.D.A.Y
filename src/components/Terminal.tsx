@@ -16,12 +16,15 @@ import {
   SlidersHorizontal,
   Hand,
   Ear,
+  BrainCircuit,
+  Save,
+  Trash2,
 } from 'lucide-react';
 import { Message } from '../types';
 import { TerminalMessage } from './TerminalMessage';
 import { getLastTranscriptionError, streamFridayResponse, transcribeAudioCommand } from '../services/ai';
 
-type SpeechMode = 'browser' | 'gemini';
+type SpeechMode = 'browser' | 'native';
 type LocalCommandResult = string | null;
 type DesktopOpenResult = {
   ok: boolean;
@@ -30,15 +33,58 @@ type DesktopOpenResult = {
   message?: string;
   url?: string;
 };
+type DesktopActionResult = DesktopOpenResult;
+type NativeVoice = {
+  Name: string;
+  Culture?: string;
+  Gender?: string;
+  Description?: string;
+};
+type VoiceProfile = {
+  id: string;
+  name: string;
+  voiceURI: string;
+  rate: number;
+  pitch: number;
+  builtin?: boolean;
+};
 const MAX_GEMINI_RECORDING_MS = 9000;
 const WAKE_PHRASE_RECORDING_MS = 3500;
 const CONVERSATION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
-const AUTO_SPEECH_START_RMS = 10;
+const AUTO_SPEECH_START_RMS = 12;
 const AUTO_SPEECH_STOP_RMS = 7;
-const AUTO_SPEECH_ABOVE_NOISE_RMS = 7;
-const AUTO_SILENCE_STOP_MS = 900;
+const AUTO_SPEECH_ABOVE_NOISE_RMS = 10;
+const AUTO_SILENCE_STOP_MS = 750;
 const AUTO_RECORD_COOLDOWN_MS = 1200;
-const MIN_AUTO_RECORDING_MS = 900;
+const MIN_AUTO_RECORDING_MS = 1100;
+const SPEECH_START_PEAK_ABOVE_NOISE = 18;
+const SPEECH_TRIM_PAD_MS = 180;
+const DOUBLE_CLAP_WINDOW_MS = 1500;
+const CLAP_DEBOUNCE_MS = 140;
+const CLAP_WAKE_COOLDOWN_MS = 1800;
+const CLAP_PEAK_THRESHOLD = 24;
+const CLAP_RMS_ABOVE_AMBIENT = 4;
+const CLAP_RMS_JUMP = 2;
+const MIC_ALWAYS_ON = true;
+const BUILT_IN_VOICE_PROFILES: VoiceProfile[] = [
+  { id: 'classic', name: 'FRIDAY Classic', voiceURI: '', rate: 0.94, pitch: 1.06, builtin: true },
+  { id: 'calm', name: 'Calm Assistant', voiceURI: '', rate: 0.88, pitch: 0.98, builtin: true },
+  { id: 'tactical', name: 'Fast Tactical', voiceURI: '', rate: 1.08, pitch: 0.92, builtin: true },
+  { id: 'soft', name: 'Soft Female', voiceURI: '', rate: 0.92, pitch: 1.16, builtin: true },
+  { id: 'deep', name: 'Deep Assistant', voiceURI: '', rate: 0.9, pitch: 0.72, builtin: true },
+];
+const DESKTOP_BOOT_GREETINGS = [
+  'Good to see you, Sir.',
+  'I have missed you, Sir.',
+  'Welcome back, Sir.',
+  'Systems are glad to have you back, Sir.',
+  'At your service again, Sir.',
+  'Friday is online and ready for you, Sir.',
+  'Back on watch, Sir.',
+  'Good morning, Sir. I am online.',
+  'Welcome back. I am listening, Sir.',
+  'All systems awake. Good to see you, Sir.',
+];
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
@@ -77,6 +123,12 @@ declare global {
     webkitAudioContext?: typeof AudioContext;
     fridayDesktop?: {
       showWindow: () => void;
+      restartNativeVoice?: () => Promise<boolean>;
+      openExternalUrl?: (url: string) => Promise<boolean>;
+      onWindowHidden?: (callback: () => void) => () => void;
+      onWindowShown?: (callback: () => void) => () => void;
+      onNativeVoiceCommand?: (callback: (text: string) => void) => () => void;
+      onNativeVoiceStatus?: (callback: (status: string) => void) => () => void;
     };
   }
 }
@@ -86,7 +138,7 @@ export const Terminal: React.FC = () => {
     {
       id: 'initial',
       role: 'friday',
-      content: 'FRIDAY online. Systems ready, Sir.',
+      content: 'Friday online. Ready when you are, Sir.',
       timestamp: new Date(),
     }
   ]);
@@ -108,10 +160,31 @@ export const Terminal: React.FC = () => {
   const [clapDebug, setClapDebug] = useState({ peak: 0, rms: 0 });
   const [isConversationActive, setIsConversationActive] = useState(false);
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(() => localStorage.getItem('friday.handsFree') !== 'false');
+  const [browserSpeechFailed, setBrowserSpeechFailed] = useState(false);
+  const [nativeVoiceBlocked, setNativeVoiceBlocked] = useState(true);
+  const [isWindowHidden, setIsWindowHidden] = useState(false);
+  const [showLlmForm, setShowLlmForm] = useState(false);
+  const [llmForm, setLlmForm] = useState({
+    mode: 'Assistant',
+    task: '',
+    context: '',
+    output: 'Concise answer',
+  });
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [nativeVoices, setNativeVoices] = useState<NativeVoice[]>([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState(() => localStorage.getItem('friday.voiceURI') || '');
   const [voiceRate, setVoiceRate] = useState(() => Number(localStorage.getItem('friday.voiceRate') || '0.94'));
   const [voicePitch, setVoicePitch] = useState(() => Number(localStorage.getItem('friday.voicePitch') || '1.06'));
+  const [selectedVoiceProfileId, setSelectedVoiceProfileId] = useState(() => localStorage.getItem('friday.voiceProfileId') || 'classic');
+  const [customVoiceProfiles, setCustomVoiceProfiles] = useState<VoiceProfile[]>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('friday.customVoiceProfiles') || '[]') as VoiceProfile[];
+      return Array.isArray(stored) ? stored.filter(profile => profile?.id && profile?.name) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [customVoiceProfileName, setCustomVoiceProfileName] = useState('');
   const [showVoiceControls, setShowVoiceControls] = useState(false);
   const [voiceArmRequestId, setVoiceArmRequestId] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -119,6 +192,7 @@ export const Terminal: React.FC = () => {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const wavRecorderStopRef = useRef<(() => void) | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
   const recordingIntervalRef = useRef<number | null>(null);
@@ -140,6 +214,11 @@ export const Terminal: React.FC = () => {
   const voiceDetectedInRecordingRef = useRef(false);
   const silenceStartedAtRef = useRef(0);
   const autoRecordCooldownUntilRef = useRef(0);
+  const lastClapAtRef = useRef(0);
+  const clapCountRef = useRef(0);
+  const clapWakeCooldownUntilRef = useRef(0);
+  const previousPeakRef = useRef(0);
+  const previousRmsRef = useRef(0);
   const ambientRmsRef = useRef(0);
   const isWakePhraseRecordingRef = useRef(false);
   const recognitionRestartTimerRef = useRef<number | null>(null);
@@ -149,9 +228,23 @@ export const Terminal: React.FC = () => {
   const assistantSpeakingRef = useRef(false);
   const speechSuppressionUntilRef = useRef(0);
   const lastMicFailureRef = useRef({ name: '', at: 0 });
+  const nativeVoiceFailureRef = useRef('');
+  const nativeVoiceEngineNoticeRef = useRef(false);
+  const autoClapArmStartedRef = useRef(false);
+  const lastSttUnavailableNoticeAtRef = useRef(0);
+  const autoEngageStartedRef = useRef(false);
+  const lastDesktopEngageAtRef = useRef(0);
+  const suppressNextShownEngageRef = useRef(false);
+  const speechQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const isWindowHiddenRef = useRef(false);
   const startWakePhraseRecordingRef = useRef<() => void>(() => {});
   const startHandsFreeRecordingRef = useRef<() => void>(() => {});
   const stopHandsFreeRecordingRef = useRef<() => void>(() => {});
+  const triggerDoubleClapWakeRef = useRef<() => void>(() => {});
+
+  const nativeVoiceAvailable = useMemo(() => {
+    return typeof window !== 'undefined' && Boolean(window.fridayDesktop?.onNativeVoiceCommand);
+  }, []);
 
   const speechSupported = useMemo(() => {
     return typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -160,6 +253,10 @@ export const Terminal: React.FC = () => {
   const micSupported = useMemo(() => {
     return typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
   }, []);
+
+  const voiceProfiles = useMemo(() => {
+    return [...BUILT_IN_VOICE_PROFILES, ...customVoiceProfiles];
+  }, [customVoiceProfiles]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -200,6 +297,10 @@ export const Terminal: React.FC = () => {
   }, [isConversationActive]);
 
   useEffect(() => {
+    isWindowHiddenRef.current = isWindowHidden;
+  }, [isWindowHidden]);
+
+  useEffect(() => {
     if (!('speechSynthesis' in window)) return;
 
     const loadVoices = () => {
@@ -223,6 +324,36 @@ export const Terminal: React.FC = () => {
   }, [selectedVoiceURI]);
 
   useEffect(() => {
+    if (!nativeVoiceAvailable) return;
+
+    let cancelled = false;
+
+    const loadNativeVoices = async () => {
+      try {
+        const response = await fetch('/api/desktop/voices');
+        const result = await response.json().catch(() => null) as { ok?: boolean; voices?: NativeVoice[] } | null;
+        if (!cancelled && result?.ok && Array.isArray(result.voices)) {
+          setNativeVoices(result.voices);
+
+          if (!selectedVoiceURI && result.voices.length > 0) {
+            const preferred = result.voices.find(voice => /zira|female|natural|jenny|aria/i.test(`${voice.Name} ${voice.Description || ''}`))
+              || result.voices[0];
+            setSelectedVoiceURI(`native:${preferred.Name}`);
+          }
+        }
+      } catch {
+        // Browser voices remain available as a fallback.
+      }
+    };
+
+    void loadNativeVoices();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [nativeVoiceAvailable, selectedVoiceURI]);
+
+  useEffect(() => {
     localStorage.setItem('friday.voiceURI', selectedVoiceURI);
   }, [selectedVoiceURI]);
 
@@ -233,6 +364,14 @@ export const Terminal: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('friday.voicePitch', String(voicePitch));
   }, [voicePitch]);
+
+  useEffect(() => {
+    localStorage.setItem('friday.voiceProfileId', selectedVoiceProfileId);
+  }, [selectedVoiceProfileId]);
+
+  useEffect(() => {
+    localStorage.setItem('friday.customVoiceProfiles', JSON.stringify(customVoiceProfiles));
+  }, [customVoiceProfiles]);
 
   useEffect(() => {
     localStorage.setItem('friday.clapWake', String(clapWakeEnabled));
@@ -271,7 +410,7 @@ export const Terminal: React.FC = () => {
   }, []);
 
   const speak = useCallback((text: string) => {
-    if (!voiceEnabled || !('speechSynthesis' in window) || !text.trim()) return;
+    if (!voiceEnabled || !text.trim()) return;
 
     if (speechResumeTimerRef.current) {
       window.clearTimeout(speechResumeTimerRef.current);
@@ -304,6 +443,33 @@ export const Terminal: React.FC = () => {
       restartRecognitionWhenReady(300);
       return;
     }
+
+    if (selectedVoiceURI.startsWith('native:')) {
+      const nativeVoice = selectedVoiceURI.replace(/^native:/, '');
+      assistantSpeakingRef.current = true;
+      const estimatedSpeechMs = Math.min(12000, Math.max(1500, cleanText.length * 55));
+      speechSuppressionUntilRef.current = performance.now() + estimatedSpeechMs + 900;
+
+      void fetch('/api/desktop/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: cleanText,
+          voice: nativeVoice,
+          rate: Math.round((voiceRate - 1) * 10),
+          volume: 100,
+        }),
+      }).finally(() => {
+        window.setTimeout(() => {
+          assistantSpeakingRef.current = false;
+          speechSuppressionUntilRef.current = performance.now() + 700;
+          restartRecognitionWhenReady(700);
+        }, estimatedSpeechMs);
+      });
+      return;
+    }
+
+    if (!('speechSynthesis' in window)) return;
 
     const estimatedSpeechMs = Math.min(12000, Math.max(1500, cleanText.length * 55));
     speechSuppressionUntilRef.current = performance.now() + estimatedSpeechMs + 900;
@@ -343,6 +509,118 @@ export const Terminal: React.FC = () => {
       content,
       timestamp: new Date()
     }]);
+  }, []);
+
+  const speakNativeOrBrowser = useCallback((text: string) => {
+    if (!voiceEnabled || !text.trim()) return;
+
+    const cleanText = text.replace(/\s+/g, ' ').trim();
+    const estimatedSpeechMs = Math.min(12000, Math.max(1500, cleanText.length * 55));
+
+    speechQueueRef.current = speechQueueRef.current.catch(() => undefined).then(async () => {
+      assistantSpeakingRef.current = true;
+      speechSuppressionUntilRef.current = performance.now() + estimatedSpeechMs + 900;
+
+      try {
+        const response = await fetch('/api/desktop/speak', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: cleanText,
+            voice: selectedVoiceURI.startsWith('native:') ? selectedVoiceURI.replace(/^native:/, '') : '',
+            rate: Math.round((voiceRate - 1) * 10),
+            volume: 100,
+          }),
+        });
+        if (!response.ok) throw new Error('Native speech unavailable');
+      } catch {
+        assistantSpeakingRef.current = false;
+        speak(cleanText);
+        await new Promise(resolve => window.setTimeout(resolve, estimatedSpeechMs + 300));
+      } finally {
+        assistantSpeakingRef.current = false;
+        speechSuppressionUntilRef.current = performance.now() + 700;
+        restartRecognitionWhenReady(700);
+      }
+    });
+  }, [restartRecognitionWhenReady, selectedVoiceURI, speak, voiceEnabled, voiceRate]);
+
+  const fetchTopHeadline = useCallback(async () => {
+    try {
+      const response = await fetch('/api/news/top-headline');
+      const result = await response.json().catch(() => null) as { ok?: boolean; headline?: string; source?: string } | null;
+      if (!response.ok || !result?.ok || !result.headline?.trim()) return null;
+      return {
+        headline: result.headline.trim(),
+        source: result.source || 'global news',
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const applyVoiceProfile = useCallback((profile: VoiceProfile) => {
+    setSelectedVoiceProfileId(profile.id);
+    if (profile.voiceURI) setSelectedVoiceURI(profile.voiceURI);
+    setVoiceRate(profile.rate);
+    setVoicePitch(profile.pitch);
+  }, []);
+
+  const saveVoiceProfile = useCallback(() => {
+    const selectedProfile = voiceProfiles.find(profile => profile.id === selectedVoiceProfileId);
+    const existingCustom = customVoiceProfiles.find(profile => profile.id === selectedVoiceProfileId);
+    const name = customVoiceProfileName.trim() || existingCustom?.name || selectedProfile?.name || 'Custom Voice';
+    const nextProfile: VoiceProfile = {
+      id: existingCustom?.id || `custom-${Date.now()}`,
+      name,
+      voiceURI: selectedVoiceURI,
+      rate: voiceRate,
+      pitch: voicePitch,
+    };
+
+    setCustomVoiceProfiles(prev => {
+      const exists = prev.some(profile => profile.id === nextProfile.id);
+      return exists
+        ? prev.map(profile => profile.id === nextProfile.id ? nextProfile : profile)
+        : [...prev, nextProfile];
+    });
+    setSelectedVoiceProfileId(nextProfile.id);
+    setCustomVoiceProfileName('');
+    addSystemMessage(`VOICE PROFILE SAVED\n${nextProfile.name}`);
+  }, [addSystemMessage, customVoiceProfileName, customVoiceProfiles, selectedVoiceProfileId, selectedVoiceURI, voicePitch, voiceProfiles, voiceRate]);
+
+  const deleteVoiceProfile = useCallback(() => {
+    const selectedProfile = customVoiceProfiles.find(profile => profile.id === selectedVoiceProfileId);
+    if (!selectedProfile) return;
+
+    setCustomVoiceProfiles(prev => prev.filter(profile => profile.id !== selectedVoiceProfileId));
+    setSelectedVoiceProfileId('classic');
+    setCustomVoiceProfileName('');
+    applyVoiceProfile(BUILT_IN_VOICE_PROFILES[0]);
+    addSystemMessage(`VOICE PROFILE DELETED\n${selectedProfile.name}`);
+  }, [addSystemMessage, applyVoiceProfile, customVoiceProfiles, selectedVoiceProfileId]);
+
+  const releaseBrowserMicMeter = useCallback(() => {
+    if (meterFrameRef.current) {
+      window.clearTimeout(meterFrameRef.current);
+      meterFrameRef.current = null;
+    }
+
+    mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+    mediaStreamRef.current = null;
+
+    if (audioContextRef.current?.state !== 'closed') {
+      void audioContextRef.current?.close();
+    }
+    audioContextRef.current = null;
+
+    setMicLevel(0);
+    setClapDebug({ peak: 0, rms: 0 });
+    ambientRmsRef.current = 0;
+    lastClapAtRef.current = 0;
+    clapCountRef.current = 0;
+    previousPeakRef.current = 0;
+    previousRmsRef.current = 0;
   }, []);
 
   const stopMicMeter = useCallback(() => {
@@ -388,27 +666,19 @@ export const Terminal: React.FC = () => {
     recorderRef.current = null;
     recordingChunksRef.current = [];
 
-    if (meterFrameRef.current) {
-      window.cancelAnimationFrame(meterFrameRef.current);
-      meterFrameRef.current = null;
-    }
-
-    mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-    mediaStreamRef.current = null;
-
-    if (audioContextRef.current?.state !== 'closed') {
-      void audioContextRef.current?.close();
-    }
-    audioContextRef.current = null;
-    setMicLevel(0);
-    setClapDebug({ peak: 0, rms: 0 });
+    releaseBrowserMicMeter();
     setRecordingSeconds(0);
     setIsWakePhraseRecording(false);
     isWakePhraseRecordingRef.current = false;
     ambientRmsRef.current = 0;
+    lastClapAtRef.current = 0;
+    clapCountRef.current = 0;
+    clapWakeCooldownUntilRef.current = 0;
+    previousPeakRef.current = 0;
+    previousRmsRef.current = 0;
     setIsClapArmed(false);
     setIsConversationActive(false);
-  }, []);
+  }, [releaseBrowserMicMeter]);
 
   const startMicMeter = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -421,8 +691,8 @@ export const Terminal: React.FC = () => {
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
+          echoCancellation: false,
+          noiseSuppression: false,
           autoGainControl: true,
         },
       });
@@ -435,11 +705,14 @@ export const Terminal: React.FC = () => {
       }
 
       const audioContext = new AudioContextClass();
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
-      const samples = new Uint8Array(analyser.fftSize);
 
       analyser.fftSize = 512;
+      const samples = new Uint8Array(analyser.fftSize);
       source.connect(analyser);
       mediaStreamRef.current = stream;
       audioContextRef.current = audioContext;
@@ -473,6 +746,7 @@ export const Terminal: React.FC = () => {
         const ambientRms = ambientRmsRef.current || rms;
         const speechStartRms = Math.max(AUTO_SPEECH_START_RMS, ambientRms + AUTO_SPEECH_ABOVE_NOISE_RMS);
         const speechStopRms = Math.max(AUTO_SPEECH_STOP_RMS, ambientRms + 2);
+        const speechStartPeak = Math.max(22, ambientRms + SPEECH_START_PEAK_ABOVE_NOISE);
         const relativeRms = Math.max(0, rms - Math.max(0, ambientRms - 2));
         setMicLevel(Math.min(100, Math.round(relativeRms * 7)));
 
@@ -482,21 +756,41 @@ export const Terminal: React.FC = () => {
           setClapDebug({ peak: Math.round(peak), rms: Math.round(rms) });
         }
 
-        if (
+        const rmsJump = rms - previousRmsRef.current;
+        const peakJump = peak - previousPeakRef.current;
+        const clapPeakThreshold = isWindowHiddenRef.current ? 14 : CLAP_PEAK_THRESHOLD;
+        const clapPeakJumpThreshold = isWindowHiddenRef.current ? 8 : 14;
+        const clapRmsAboveAmbient = isWindowHiddenRef.current ? 1.5 : CLAP_RMS_ABOVE_AMBIENT;
+        const isSharpClap =
           clapWakeEnabledRef.current
           && isClapArmedRef.current
-          && speechModeRef.current === 'gemini'
-          && !isRecordingRef.current
-          && !isTranscribingRef.current
           && !processingRef.current
-          && now > autoRecordCooldownUntilRef.current
           && !isBusyWithVoice
-          && rms > speechStartRms
-        ) {
-          autoRecordCooldownUntilRef.current = now + WAKE_PHRASE_RECORDING_MS + 900;
-          setVoiceStatus('Checking wake phrase');
-          startWakePhraseRecordingRef.current();
+          && now > clapWakeCooldownUntilRef.current
+          && peak >= clapPeakThreshold
+          && (
+            rms >= ambientRms + clapRmsAboveAmbient
+            || rmsJump >= CLAP_RMS_JUMP
+            || peakJump >= clapPeakJumpThreshold
+          );
+
+        if (isSharpClap && now - lastClapAtRef.current > CLAP_DEBOUNCE_MS) {
+          const withinDoubleClapWindow = now - lastClapAtRef.current <= DOUBLE_CLAP_WINDOW_MS;
+          clapCountRef.current = withinDoubleClapWindow ? clapCountRef.current + 1 : 1;
+          lastClapAtRef.current = now;
+          setVoiceStatus(clapCountRef.current >= 2 ? 'Double clap detected' : `Clap ${clapCountRef.current}/2`);
+
+          if (clapCountRef.current >= 2) {
+            clapWakeCooldownUntilRef.current = now + CLAP_WAKE_COOLDOWN_MS;
+            clapCountRef.current = 0;
+            triggerDoubleClapWakeRef.current();
+          }
+        } else if (clapCountRef.current > 0 && now - lastClapAtRef.current > DOUBLE_CLAP_WINDOW_MS) {
+          clapCountRef.current = 0;
         }
+
+        previousPeakRef.current = peak;
+        previousRmsRef.current = rms;
 
         if (
           handsFreeEnabled
@@ -508,15 +802,30 @@ export const Terminal: React.FC = () => {
           && now > autoRecordCooldownUntilRef.current
           && !isBusyWithVoice
           && rms > speechStartRms
+          && peak > speechStartPeak
         ) {
-          setVoiceStatus('Speech detected');
+          setSpeechMode('browser');
+          setVoiceStatus('Speech detected; recording locally');
           startHandsFreeRecordingRef.current();
+        } else if (
+          conversationActiveRef.current
+          && !isClapArmedRef.current
+          && !processingRef.current
+          && !isBusyWithVoice
+          && rms > speechStartRms
+          && peak > speechStartPeak
+          && nativeVoiceBlocked
+          && !speechSupported
+          && now - lastSttUnavailableNoticeAtRef.current > 4500
+        ) {
+          lastSttUnavailableNoticeAtRef.current = now;
+          setVoiceStatus('Audio detected; speech-to-text unavailable');
         }
 
         if (isRecordingRef.current) {
           const elapsed = now - recordingStartedAtRef.current;
 
-          if (rms > speechStartRms) {
+          if (rms > speechStartRms && peak > speechStartPeak) {
             voiceDetectedInRecordingRef.current = true;
             silenceStartedAtRef.current = 0;
           } else if (
@@ -531,7 +840,7 @@ export const Terminal: React.FC = () => {
           }
         }
 
-        meterFrameRef.current = window.requestAnimationFrame(updateMeter);
+        meterFrameRef.current = window.setTimeout(updateMeter, isWindowHiddenRef.current ? 35 : 25);
       };
 
       updateMeter();
@@ -563,7 +872,7 @@ export const Terminal: React.FC = () => {
 
       return false;
     }
-  }, [addSystemMessage, handsFreeEnabled, stopMicMeter]);
+  }, [addSystemMessage, handsFreeEnabled, nativeVoiceAvailable, nativeVoiceBlocked, speechSupported, stopMicMeter]);
 
   const blobToBase64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -579,9 +888,141 @@ export const Terminal: React.FC = () => {
     reader.readAsDataURL(blob);
   });
 
+  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return window.btoa(binary);
+  };
+
+  const encodeWav = (chunks: Float32Array[], sampleRate: number) => {
+    const sampleCount = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const buffer = new ArrayBuffer(44 + sampleCount * 2);
+    const view = new DataView(buffer);
+    let offset = 0;
+
+    const writeString = (value: string) => {
+      for (let i = 0; i < value.length; i += 1) {
+        view.setUint8(offset, value.charCodeAt(i));
+        offset += 1;
+      }
+    };
+
+    writeString('RIFF');
+    view.setUint32(offset, 36 + sampleCount * 2, true); offset += 4;
+    writeString('WAVE');
+    writeString('fmt ');
+    view.setUint32(offset, 16, true); offset += 4;
+    view.setUint16(offset, 1, true); offset += 2;
+    view.setUint16(offset, 1, true); offset += 2;
+    view.setUint32(offset, sampleRate, true); offset += 4;
+    view.setUint32(offset, sampleRate * 2, true); offset += 4;
+    view.setUint16(offset, 2, true); offset += 2;
+    view.setUint16(offset, 16, true); offset += 2;
+    writeString('data');
+    view.setUint32(offset, sampleCount * 2, true); offset += 4;
+
+    for (const chunk of chunks) {
+      for (const sample of chunk) {
+        const clamped = Math.max(-1, Math.min(1, sample));
+        view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+        offset += 2;
+      }
+    }
+
+    return buffer;
+  };
+
+  const cleanSpeechChunks = (chunks: Float32Array[], sampleRate: number) => {
+    const sampleCount = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    if (!sampleCount) return chunks;
+
+    const merged = new Float32Array(sampleCount);
+    let writeOffset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, writeOffset);
+      writeOffset += chunk.length;
+    }
+
+    const filtered = new Float32Array(merged.length);
+    let previousInput = 0;
+    let previousOutput = 0;
+    for (let i = 0; i < merged.length; i += 1) {
+      const input = merged[i];
+      const output = input - previousInput + 0.995 * previousOutput;
+      filtered[i] = output;
+      previousInput = input;
+      previousOutput = output;
+    }
+
+    const frameSize = Math.max(160, Math.round(sampleRate * 0.02));
+    const frameCount = Math.max(1, Math.ceil(filtered.length / frameSize));
+    const frameRms: number[] = [];
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const start = frame * frameSize;
+      const end = Math.min(filtered.length, start + frameSize);
+      let sum = 0;
+      for (let i = start; i < end; i += 1) sum += filtered[i] * filtered[i];
+      frameRms.push(Math.sqrt(sum / Math.max(1, end - start)));
+    }
+
+    const ambientFloat = Math.max(0, ambientRmsRef.current) / 128;
+    const sortedRms = [...frameRms].sort((a, b) => a - b);
+    const measuredFloor = sortedRms[Math.floor(sortedRms.length * 0.25)] || 0;
+    const noiseFloor = Math.max(ambientFloat, measuredFloor);
+    const voiceThreshold = Math.max(0.018, noiseFloor + 0.018);
+    const gateThreshold = Math.max(0.01, noiseFloor + 0.006);
+    const padFrames = Math.ceil((SPEECH_TRIM_PAD_MS / 1000) * sampleRate / frameSize);
+
+    let firstVoiceFrame = frameRms.findIndex(value => value >= voiceThreshold);
+    let lastVoiceFrame = frameRms.length - 1;
+    while (lastVoiceFrame >= 0 && frameRms[lastVoiceFrame] < voiceThreshold) {
+      lastVoiceFrame -= 1;
+    }
+
+    if (firstVoiceFrame < 0 || lastVoiceFrame < firstVoiceFrame) {
+      firstVoiceFrame = 0;
+      lastVoiceFrame = frameRms.length - 1;
+    }
+
+    const startFrame = Math.max(0, firstVoiceFrame - padFrames);
+    const endFrame = Math.min(frameRms.length - 1, lastVoiceFrame + padFrames);
+    const startSample = startFrame * frameSize;
+    const endSample = Math.min(filtered.length, (endFrame + 1) * frameSize);
+    const cleaned = filtered.slice(startSample, endSample);
+
+    for (let frame = 0; frame < Math.ceil(cleaned.length / frameSize); frame += 1) {
+      const sourceFrame = startFrame + frame;
+      const start = frame * frameSize;
+      const end = Math.min(cleaned.length, start + frameSize);
+      const gain = (frameRms[sourceFrame] || 0) < gateThreshold ? 0.08 : 1;
+      if (gain === 1) continue;
+      for (let i = start; i < end; i += 1) cleaned[i] *= gain;
+    }
+
+    let peak = 0;
+    for (const sample of cleaned) peak = Math.max(peak, Math.abs(sample));
+    if (peak > 0 && peak < 0.55) {
+      const gain = Math.min(3.2, 0.78 / peak);
+      for (let i = 0; i < cleaned.length; i += 1) cleaned[i] = Math.max(-1, Math.min(1, cleaned[i] * gain));
+    }
+
+    return [cleaned];
+  };
+
   const endConversation = useCallback((status = 'Wake phrase idle') => {
     conversationActiveRef.current = false;
     setIsConversationActive(false);
+    if (clapWakeEnabledRef.current) {
+      setIsClapArmed(true);
+      isClapArmedRef.current = true;
+      setVoiceStatus('Double clap standby');
+      return;
+    }
+
     setIsClapArmed(false);
     isClapArmedRef.current = false;
     setVoiceStatus(status);
@@ -599,15 +1040,63 @@ export const Terminal: React.FC = () => {
     }, CONVERSATION_IDLE_TIMEOUT_MS);
   }, [endConversation]);
 
+  const triggerDoubleClapWake = useCallback(() => {
+    suppressNextShownEngageRef.current = true;
+    window.fridayDesktop?.showWindow();
+    inputRef.current?.focus();
+    const shouldActivateConversation = true;
+    conversationActiveRef.current = shouldActivateConversation;
+    setIsConversationActive(shouldActivateConversation);
+    setIsClapArmed(false);
+    isClapArmedRef.current = false;
+    shouldListenRef.current = false;
+    setIsListening(false);
+    setSpeechMode('browser');
+    setLiveTranscript('');
+    setIsWindowHidden(false);
+    setVoiceStatus(shouldActivateConversation ? 'Double clap wake active' : 'F.R.I.D.A.Y opened by double clap');
+
+    if (shouldActivateConversation) {
+      shouldListenRef.current = false;
+      setIsListening(true);
+      setVoiceStatus('Local voice active; speak your command');
+      refreshConversationIdleTimer();
+      addSystemMessage('DOUBLE CLAP WAKE\nF.R.I.D.A.Y is active. Speak your command now, or type below.');
+      autoRecordCooldownUntilRef.current = performance.now() + (voiceEnabled ? 1200 : 300);
+      void startMicMeter().then((ready) => {
+        if (!ready) {
+          setIsListening(false);
+          setVoiceStatus('Microphone unavailable after double clap');
+          return;
+        }
+
+        conversationActiveRef.current = true;
+        setIsConversationActive(true);
+        isClapArmedRef.current = false;
+        setIsClapArmed(false);
+        shouldListenRef.current = false;
+        setIsListening(true);
+        refreshConversationIdleTimer();
+        setVoiceStatus(handsFreeEnabled ? 'Hands-free listening' : 'Local voice active; speak your command');
+      });
+      if (voiceEnabled) speakNativeOrBrowser('Friday awake. Ready when you are, Sir.');
+    } else {
+      addSystemMessage('DOUBLE CLAP LAUNCH\nF.R.I.D.A.Y window opened.');
+    }
+  }, [addSystemMessage, handsFreeEnabled, refreshConversationIdleTimer, speakNativeOrBrowser, startMicMeter, voiceEnabled]);
+
+  useEffect(() => {
+    triggerDoubleClapWakeRef.current = triggerDoubleClapWake;
+  }, [triggerDoubleClapWake]);
+
   const stripWakePhrase = useCallback((text: string) => {
     const cleaned = normalizeVoiceCommand(text);
     if (!wakeModeRef.current || conversationActiveRef.current) return cleaned;
 
-    const normalized = cleaned.toLowerCase();
-    const wakeIndex = normalized.indexOf('friday');
+    const wakeIndex = findWakeWordIndex(cleaned);
     if (wakeIndex === -1) return '';
 
-    return cleaned.slice(wakeIndex + 'friday'.length).trim();
+    return stripFridayAddress(cleaned.slice(wakeIndex)).trim();
   }, []);
 
   const postDesktopOpen = async (endpoint: string, command: string) => {
@@ -619,6 +1108,33 @@ export const Terminal: React.FC = () => {
     return await response.json() as DesktopOpenResult;
   };
 
+  const postDesktopClose = async (endpoint: string, command: string) => {
+    const response = await fetch(`${endpoint}/api/desktop/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: command }),
+    });
+    return await response.json() as DesktopActionResult;
+  };
+
+  const postDesktopAction = async (endpoint: string, command: string) => {
+    const response = await fetch(`${endpoint}/api/desktop/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: command }),
+    });
+    return await response.json() as DesktopActionResult;
+  };
+
+  const openUrlFromElectron = async (url?: string) => {
+    if (!url || !window.fridayDesktop?.openExternalUrl) return false;
+    try {
+      return await window.fridayDesktop.openExternalUrl(url);
+    } catch {
+      return false;
+    }
+  };
+
   const runDesktopOpenCommand = useCallback(async (command: string) => {
     const isLocalPage = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
@@ -626,8 +1142,14 @@ export const Terminal: React.FC = () => {
       const result = await postDesktopOpen('', command);
 
       if (result.ok && result.clientOpen && result.url) {
-        window.open(result.url, '_blank', 'noopener,noreferrer');
+        if (!await openUrlFromElectron(result.url)) {
+          window.open(result.url, '_blank', 'noopener,noreferrer');
+        }
         return result.message || 'Opening requested target.';
+      }
+
+      if (result.ok && result.url) {
+        await openUrlFromElectron(result.url);
       }
 
       if (result.ok) return result.message || 'Opening requested target.';
@@ -635,7 +1157,9 @@ export const Terminal: React.FC = () => {
       if (!isLocalPage && result.desktopBridge === false) {
         const localResult = await postDesktopOpen('http://127.0.0.1:3000', command);
         if (localResult.ok && localResult.clientOpen && localResult.url) {
-          window.open(localResult.url, '_blank', 'noopener,noreferrer');
+          if (!await openUrlFromElectron(localResult.url)) {
+            window.open(localResult.url, '_blank', 'noopener,noreferrer');
+          }
         }
         return localResult.message || (localResult.ok ? 'Opening requested target.' : 'Desktop command failed.');
       }
@@ -646,7 +1170,9 @@ export const Terminal: React.FC = () => {
         try {
           const localResult = await postDesktopOpen('http://127.0.0.1:3000', command);
           if (localResult.ok && localResult.clientOpen && localResult.url) {
-            window.open(localResult.url, '_blank', 'noopener,noreferrer');
+            if (!await openUrlFromElectron(localResult.url)) {
+              window.open(localResult.url, '_blank', 'noopener,noreferrer');
+            }
           }
           return localResult.message || (localResult.ok ? 'Opening requested target.' : 'Desktop command failed.');
         } catch {
@@ -655,6 +1181,60 @@ export const Terminal: React.FC = () => {
       }
 
       return 'Desktop bridge offline. Start FRIDAY with npm run dev so I can control approved desktop actions.';
+    }
+  }, []);
+
+  const runDesktopCloseCommand = useCallback(async (command: string) => {
+    const isLocalPage = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+    try {
+      const result = await postDesktopClose('', command);
+      if (result.ok) return result.message || 'Closing requested target.';
+
+      if (!isLocalPage && result.desktopBridge === false) {
+        const localResult = await postDesktopClose('http://127.0.0.1:3000', command);
+        return localResult.message || (localResult.ok ? 'Closing requested target.' : 'Desktop command failed.');
+      }
+
+      return result.message || 'Desktop command failed.';
+    } catch {
+      if (!isLocalPage) {
+        try {
+          const localResult = await postDesktopClose('http://127.0.0.1:3000', command);
+          return localResult.message || (localResult.ok ? 'Closing requested target.' : 'Desktop command failed.');
+        } catch {
+          return 'Local desktop bridge offline. Keep FRIDAY running on this Windows PC, then try again.';
+        }
+      }
+
+      return 'Desktop bridge offline. Start FRIDAY with npm run dev so I can control approved desktop actions.';
+    }
+  }, []);
+
+  const runDesktopActionCommand = useCallback(async (command: string) => {
+    const isLocalPage = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+    try {
+      const result = await postDesktopAction('', command);
+      if (result.ok) return result.message || 'Running requested desktop action.';
+
+      if (!isLocalPage && result.desktopBridge === false) {
+        const localResult = await postDesktopAction('http://127.0.0.1:3000', command);
+        return localResult.message || (localResult.ok ? 'Running requested desktop action.' : 'Desktop action failed.');
+      }
+
+      return result.message || 'Desktop action failed.';
+    } catch {
+      if (!isLocalPage) {
+        try {
+          const localResult = await postDesktopAction('http://127.0.0.1:3000', command);
+          return localResult.message || (localResult.ok ? 'Running requested desktop action.' : 'Desktop action failed.');
+        } catch {
+          return 'Local desktop bridge offline. Keep FRIDAY running on this Windows PC, then try again.';
+        }
+      }
+
+      return 'Desktop bridge offline. Start FRIDAY with npm run dev so I can run approved desktop actions.';
     }
   }, []);
 
@@ -669,7 +1249,7 @@ export const Terminal: React.FC = () => {
     }
 
     if (cmd === 'help') {
-      return `AVAILABLE SYSTEM COMMANDS:\n- open instagram/youtube/google/gmail/whatsapp/chatgpt/github/jio hotstar: Open site in browser\n- open chrome/opera gx/notepad/calculator/camera/settings/explorer/downloads/documents/desktop/vscode: Open approved local apps and folders\n- clear/cls: Clear the terminal screen\n- time: Display system clock\n- help: Show this menu\n- status: Diagnostic overview\n- listen: Enable voice input\n- stop listening: Disable voice input\n- sleep/stand down/go idle: End active conversation\n- mute/unmute: Toggle spoken responses\n\nVoice: Hand icon controls the "Friday wake up" wake phrase. Ear icon controls hands-free follow-up. With both on, FRIDAY can wake from standby, answer, and keep listening until sleep or timeout.`;
+      return `AVAILABLE SYSTEM COMMANDS:\n- open instagram/youtube/google/gmail/whatsapp/chatgpt/github/jio hotstar: Open site in browser\n- open chrome/opera gx/notepad/calculator/camera/settings/microphone settings/speech settings/voice training/explorer/downloads/documents/desktop/vscode: Open approved local apps and folders\n- close opera gx/chrome/notepad/calculator/vscode: Close approved local apps\n- lock screen / open task manager: Run approved Windows actions\n- clear/cls: Clear the terminal screen\n- time: Display system clock\n- help: Show this menu\n- status: Diagnostic overview\n- listen: Enable background two-clap launcher\n- stop listening: Disable voice and clap input\n- sleep/stand down/go idle: End active conversation\n- mute/unmute: Toggle spoken responses\n\nVoice: Close FRIDAY with X to hide it. While hidden, clap twice to reopen the window.`;
     }
 
     if (
@@ -681,24 +1261,42 @@ export const Terminal: React.FC = () => {
       || cmd.includes('do system checks')
       || cmd.includes('give me stats')
       || cmd.includes('give me status')
+      || /\b(?:trouble|troubles|issue|issues|problem|problems|diagnostic|diagnostics)\b.*\b(?:system|pc|computer|machine|friday)\b/.test(cmd)
+      || /\b(?:system|pc|computer|machine|friday)\b.*\b(?:trouble|troubles|issue|issues|problem|problems|diagnostic|diagnostics)\b/.test(cmd)
     ) {
-      return `SYSTEM DIAGNOSTICS [OK]\nCORE TEMPERATURE: 38 C\nMEMORY USAGE: 2.1GB / 64GB\nNETWORK: SECURE_LINK_PRO\nAI MODEL: GEMINI_FLASH_3.0\nVOICE INPUT: ${speechSupported ? 'AVAILABLE' : 'UNSUPPORTED'}\nAUDIO OUTPUT: ${'speechSynthesis' in window ? 'AVAILABLE' : 'UNSUPPORTED'}\nINTEGRITY: 100%`;
+      const sttStatus = micSupported ? 'local Whisper via browser mic' : 'microphone unavailable';
+      return `Diagnostics look clean, Sir.\nCore temperature: 38 C\nMemory usage: 2.1GB / 64GB\nNetwork: connected\nAI model: local-first\nVoice input: ${sttStatus}\nAudio output: ${'speechSynthesis' in window ? 'available' : 'unsupported'}`;
+    }
+
+    if (cmd === 'voice status' || cmd === 'speech status') {
+      return [
+        `Microphone meter: ${micSupported ? 'available' : 'unavailable'}`,
+        'Command transcription: local Whisper',
+        `Windows native speech: ${nativeVoiceAvailable ? 'ignored' : 'unavailable'}`,
+        `Browser speech recognition: ${speechSupported ? 'available but not required' : 'not required in this Electron window'}`,
+      ].join('\n');
     }
 
     if (cmd === 'listen') {
       setVoiceArmRequestId(Date.now());
-      return 'Voice wake listening armed. Allow microphone access if the browser asks, then say "Friday wake up".';
+      return 'Background two-clap launcher armed. Close FRIDAY with X, then clap twice to reopen it.';
     }
 
     if (cmd === 'stop listening') {
       setIsListening(false);
-      endConversation('Voice input disabled.');
+      setClapWakeEnabled(false);
+      stopMicMeter();
+      conversationActiveRef.current = false;
+      setIsConversationActive(false);
+      setIsClapArmed(false);
+      isClapArmedRef.current = false;
+      setVoiceStatus('Voice input disabled.');
       return 'Voice input disabled.';
     }
 
     if (cmd === 'sleep' || cmd === 'stand down' || cmd === 'go idle') {
       endConversation('Conversation idle.');
-      return 'Standing down. Say Friday wake up when you need me again.';
+      return 'Standing down. Double clap when you need me again.';
     }
 
     if (cmd === 'mute') {
@@ -712,18 +1310,28 @@ export const Terminal: React.FC = () => {
     }
 
     return null;
-  }, [endConversation, speechSupported]);
+  }, [endConversation, micSupported, nativeVoiceAvailable, nativeVoiceBlocked, speechSupported, stopMicMeter]);
 
   const normalizeVoiceCommand = (rawText: string) => rawText.replace(/[^\p{L}\p{N}\s?!.,"'-]/gu, '').trim();
   const stripAssistantEcho = (rawText: string) => {
     let cleaned = normalizeVoiceCommand(rawText);
     cleaned = cleaned.replace(/^error:?\s*connection lost\.?\s*systems failing,?\s*sir\.?\s*/i, '');
+    cleaned = cleaned.replace(/^friday awake\.?\s*ready when you are,?\s*sir\.?\s*/i, '');
+    cleaned = cleaned.replace(/^awake,?\s*ready when you are,?\s*sir\.?\s*/i, '');
+    cleaned = cleaned.replace(/^good to see you,?\s*sir\.?\s*friday is online and listening\.?\s*/i, '');
     cleaned = cleaned.replace(/^please check your connectivity\.?\s*/i, '');
     cleaned = cleaned.replace(/^i cannot reach the friday server right now\.?\s*/i, '');
     cleaned = cleaned.replace(/^i cannot reach the gemini server right now:?\s*/i, '');
     return cleaned.trim();
   };
   const hasCommandText = (rawText: string) => /[\p{L}\p{N}]/u.test(rawText);
+  const wakeWordPattern = /\b(?:friday|fri\s*day|f\s*r\s*i\s*d\s*a\s*y|freddy|freddie|fridi|free\s*day)\b/i;
+  const hasWakeWord = (rawText: string) => wakeWordPattern.test(normalizeVoiceCommand(rawText));
+  const findWakeWordIndex = (rawText: string) => {
+    const normalized = normalizeVoiceCommand(rawText).toLowerCase();
+    const match = normalized.match(wakeWordPattern);
+    return match?.index ?? -1;
+  };
   const isAssistantFailureEcho = (rawText: string) => {
     const normalized = stripAssistantEcho(rawText).toLowerCase();
     return normalized === ''
@@ -733,31 +1341,53 @@ export const Terminal: React.FC = () => {
   };
   const isFridayWakeUpPhrase = (rawText: string) => {
     const normalized = normalizeVoiceCommand(rawText).toLowerCase();
-    return /\bfriday\b/.test(normalized) && /\b(wake up|wakeup|activate|online|start listening)\b/.test(normalized);
+    return hasWakeWord(normalized) && /\b(wake up|wakeup|activate|online|start listening)\b/.test(normalized);
   };
   const stripFridayWakeUpPhrase = (rawText: string) => normalizeVoiceCommand(rawText)
-    .replace(/\bfriday\b[\s,.:;!?-]*(?:wake up|wakeup|activate|online|start listening)\b[\s,.:;!?-]*/i, '')
+    .replace(new RegExp(`${wakeWordPattern.source}[\\s,.:;!?-]*(?:wake up|wakeup|activate|online|start listening)\\b[\\s,.:;!?-]*`, 'i'), '')
     .trim();
   const stripFridayAddress = (rawText: string) => stripFridayWakeUpPhrase(rawText)
-    .replace(/\bfriday\b[\s,.:;!?-]*/i, '')
+    .replace(new RegExp(`^(?:hey|hi|hello|yo|okay|ok)\\s+${wakeWordPattern.source}[\\s,.:;!?-]*`, 'i'), '')
+    .replace(new RegExp(`${wakeWordPattern.source}[\\s,.:;!?-]*`, 'i'), '')
+    .replace(/^(?:sir|boss)\b[\s,.:;!?-]*/i, '')
     .trim();
   const normalizeCommandPhrase = (rawText: string) => normalizeVoiceCommand(rawText)
     .replace(/^(?:and|then|now|please)\s+/i, '')
     .replace(/\s+(?:please)$/i, '')
     .trim();
+  const shouldRouteToDesktopOpen = (cmd: string) => {
+    if (/\b(open|launch|start)\b/.test(cmd)) return true;
+    if (/\b(search|google)\b/.test(cmd) && /\b(?:in|on|with|using)\s+(?:browser|google|chrome|edge|opera|opera gx)\b/.test(cmd)) return true;
+    if (/\b(open|show)\b.*\b(?:search results|google results|results page)\b/.test(cmd)) return true;
+    return false;
+  };
+  const isDesktopActionCommand = (cmd: string) => /\b(lock|task manager|taskmgr|battery|power level|charge|battery life)\b/.test(cmd);
+  const isDesktopCloseCommand = (cmd: string) => /\b(close|quit|exit|kill|terminate|shut)\b/.test(cmd);
+  const splitParagraphInstructions = (rawCommand: string) => {
+    const command = rawCommand
+      .replace(/\b(?:after that|and then|then|also|next)\b/gi, '.')
+      .replace(/\s+and\s+(?=\b(?:open|launch|start|close|quit|exit|kill|terminate|shut|lock|check|show|tell|battery|power|charge|task manager|taskmgr)\b)/gi, '.')
+      .replace(/\s+,\s+(?=\b(?:open|launch|start|close|quit|exit|kill|terminate|shut|lock|check|show|tell|battery|power|charge|task manager|taskmgr)\b)/gi, '.');
+
+    return command
+      .split(/[.;]\s*/g)
+      .map(part => normalizeCommandPhrase(part))
+      .filter(part => part && hasCommandText(part));
+  };
 
   const resumeConversationListening = useCallback((delay = 700) => {
     if (!conversationActiveRef.current) return;
 
     refreshConversationIdleTimer();
-    shouldListenRef.current = true;
-    setIsListening(true);
+    shouldListenRef.current = false;
+    setIsListening(false);
+    setSpeechMode('browser');
     setVoiceStatus(handsFreeEnabled ? 'Hands-free listening' : 'Conversation active');
-    restartRecognitionWhenReady(delay);
-  }, [handsFreeEnabled, refreshConversationIdleTimer, restartRecognitionWhenReady]);
+    autoRecordCooldownUntilRef.current = performance.now() + delay;
+  }, [handsFreeEnabled, refreshConversationIdleTimer]);
 
   const handleSendText = useCallback(async (rawText: string) => {
-    const text = normalizeCommandPhrase(stripAssistantEcho(rawText));
+    const text = normalizeCommandPhrase(stripFridayAddress(stripAssistantEcho(rawText)));
     if (!text || !hasCommandText(text) || processingRef.current) return;
 
     if (isAssistantFailureEcho(text)) {
@@ -778,14 +1408,40 @@ export const Terminal: React.FC = () => {
     setIsProcessing(true);
 
     const cmd = text.toLowerCase();
-    let localResponse = handleLocalCommand(cmd);
+    const runLocalInstruction = async (instruction: string) => {
+      let response = handleLocalCommand(instruction);
 
-    if (!localResponse && /\b(open|launch|start)\b/.test(cmd)) {
-      localResponse = await runDesktopOpenCommand(cmd);
+      if (!response && isDesktopCloseCommand(instruction)) {
+        response = await runDesktopCloseCommand(instruction);
+      }
+
+      if (!response && isDesktopActionCommand(instruction)) {
+        response = await runDesktopActionCommand(instruction);
+      }
+
+      if (!response && shouldRouteToDesktopOpen(instruction)) {
+        response = await runDesktopOpenCommand(instruction);
+      }
+
+      return response;
+    };
+
+    const instructionClauses = splitParagraphInstructions(cmd);
+    const localResponses: string[] = [];
+
+    for (const instruction of instructionClauses) {
+      const response = await runLocalInstruction(instruction);
+      if (response) localResponses.push(response);
     }
 
-    if (localResponse) {
-      if (cmd !== 'clear' && cmd !== 'cls') addSystemMessage(localResponse);
+    if (localResponses.length > 0) {
+      const localResponse = localResponses.length === 1
+        ? localResponses[0]
+        : `Done, Sir.\n${localResponses.map((response, index) => `${index + 1}. ${response}`).join('\n')}`;
+
+      if (!instructionClauses.some(instruction => instruction === 'clear' || instruction === 'cls')) {
+        addSystemMessage(localResponse);
+      }
       speak(localResponse);
       setIsProcessing(false);
       resumeConversationListening(voiceEnabled ? 900 : 250);
@@ -833,11 +1489,113 @@ export const Terminal: React.FC = () => {
       setIsProcessing(false);
       resumeConversationListening(voiceEnabled ? 1200 : 250);
     }
-  }, [addSystemMessage, handleLocalCommand, messages, resumeConversationListening, runDesktopOpenCommand, speak, voiceEnabled]);
+  }, [addSystemMessage, handleLocalCommand, messages, resumeConversationListening, runDesktopActionCommand, runDesktopCloseCommand, runDesktopOpenCommand, speak, voiceEnabled]);
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     await handleSendText(input);
+  };
+
+  useEffect(() => {
+    const unsubscribeCommand = window.fridayDesktop?.onNativeVoiceCommand?.((heardText) => {
+      if (nativeVoiceBlocked) return;
+
+      const cleanedText = normalizeVoiceCommand(heardText);
+      if (!hasCommandText(cleanedText) || processingRef.current) return;
+
+      if (assistantSpeakingRef.current || performance.now() < speechSuppressionUntilRef.current) {
+        setLiveTranscript(cleanedText);
+        setVoiceStatus('Ignoring FRIDAY speech');
+        return;
+      }
+
+      setSpeechMode('native');
+
+      const command = wakeModeRef.current && !conversationActiveRef.current
+        ? stripFridayAddress(cleanedText)
+        : cleanedText;
+
+      if (wakeModeRef.current && !conversationActiveRef.current && !hasWakeWord(cleanedText)) {
+        setLiveTranscript(cleanedText);
+        setVoiceStatus(`Heard "${cleanedText}". Say "Friday" first.`);
+        return;
+      }
+
+      setLiveTranscript(cleanedText);
+
+      if (!hasCommandText(command)) {
+        conversationActiveRef.current = true;
+        setIsConversationActive(true);
+        refreshConversationIdleTimer();
+        setVoiceStatus('Windows voice ready');
+        addSystemMessage(`HEARD: ${cleanedText}`);
+        return;
+      }
+
+      conversationActiveRef.current = true;
+      setIsConversationActive(true);
+      refreshConversationIdleTimer();
+      setVoiceStatus('Windows voice command captured');
+      addSystemMessage(`HEARD: ${cleanedText}`);
+      void handleSendText(command);
+    });
+
+    const unsubscribeStatus = window.fridayDesktop?.onNativeVoiceStatus?.((status) => {
+      if (/access is denied|E_ACCESSDENIED/i.test(status)) {
+        setNativeVoiceBlocked(true);
+        setSpeechMode('browser');
+        shouldListenRef.current = false;
+        setIsListening(false);
+        setVoiceStatus('Windows voice blocked; using local Whisper');
+
+        if (nativeVoiceFailureRef.current !== 'access-denied') {
+          nativeVoiceFailureRef.current = 'access-denied';
+          addSystemMessage('WINDOWS VOICE BLOCKED\nWindows denied microphone access to the native listener. FRIDAY will keep using the browser mic meter and local Whisper transcription instead.');
+        }
+
+        return;
+      }
+
+      if (/Windows voice online: en-US/i.test(status)) {
+        setNativeVoiceBlocked(true);
+        setSpeechMode('browser');
+        if (!nativeVoiceEngineNoticeRef.current) {
+          nativeVoiceEngineNoticeRef.current = true;
+          addSystemMessage('LOCAL VOICE ENGINE\nWindows voice events are available, but FRIDAY is using local Whisper for command transcription.');
+        }
+        return;
+      }
+
+      if (/^(Hearing|Heard unclearly)/i.test(status)) {
+        return;
+      }
+    });
+
+    return () => {
+      unsubscribeCommand?.();
+      unsubscribeStatus?.();
+    };
+  }, [addSystemMessage, handleSendText, nativeVoiceBlocked, refreshConversationIdleTimer]);
+
+  const handleLlmFormSubmit = async (event?: React.FormEvent) => {
+    if (event) event.preventDefault();
+
+    const task = llmForm.task.trim();
+    const context = llmForm.context.trim();
+    const output = llmForm.output.trim();
+
+    if (!task || isProcessing) return;
+
+    const prompt = [
+      `LLM MODE: ${llmForm.mode}`,
+      `TASK: ${task}`,
+      context ? `CONTEXT:\n${context}` : '',
+      output ? `OUTPUT STYLE: ${output}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    setLlmForm(prev => ({ ...prev, task: '', context: '' }));
+    setShowLlmForm(false);
+    await handleSendText(prompt);
   };
 
   const stopGeminiRecording = useCallback(() => {
@@ -854,6 +1612,12 @@ export const Terminal: React.FC = () => {
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       recorder.stop();
+    }
+
+    if (wavRecorderStopRef.current) {
+      const stop = wavRecorderStopRef.current;
+      wavRecorderStopRef.current = null;
+      stop();
     }
   }, []);
 
@@ -874,40 +1638,54 @@ export const Terminal: React.FC = () => {
     const micReady = mediaStreamRef.current || await startMicMeter();
     if (!micReady || !mediaStreamRef.current) return;
 
-    if (!('MediaRecorder' in window)) {
+    if (!audioContextRef.current || !mediaStreamRef.current) {
       setVoiceStatus('Audio recorder unavailable');
-      addSystemMessage('AUDIO RECORDER UNAVAILABLE\nYour browser can access the mic, but it cannot create audio recordings for Gemini transcription.');
+      addSystemMessage('AUDIO RECORDER UNAVAILABLE\nYour browser can access the mic, but FRIDAY could not attach a local WAV recorder.');
       return;
     }
 
     recordingChunksRef.current = [];
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-    const recorder = new MediaRecorder(mediaStreamRef.current, { mimeType });
+    const audioContext = audioContextRef.current;
+    const source = audioContext.createMediaStreamSource(mediaStreamRef.current);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const silentGain = audioContext.createGain();
+    const wavChunks: Float32Array[] = [];
+    let stopped = false;
 
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+    silentGain.gain.value = 0;
+    processor.onaudioprocess = (event) => {
+      if (stopped) return;
+      wavChunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
     };
+    source.connect(processor);
+    processor.connect(silentGain);
+    silentGain.connect(audioContext.destination);
 
-    recorder.onstop = async () => {
+    const finishRecording = async () => {
+      if (stopped) return;
+      stopped = true;
+      wavRecorderStopRef.current = null;
+      processor.disconnect();
+      source.disconnect();
+      silentGain.disconnect();
       setIsRecording(false);
       setIsWakePhraseRecording(false);
       isWakePhraseRecordingRef.current = false;
       setIsTranscribing(true);
       setRecordingSeconds(0);
-      setVoiceStatus('Transcribing with Gemini');
+      setVoiceStatus('Transcribing locally');
 
       try {
-        const blob = new Blob(recordingChunksRef.current, { type: mimeType });
-        if (blob.size < 1200) {
+        const cleanedChunks = cleanSpeechChunks(wavChunks, audioContext.sampleRate);
+        const wavBuffer = encodeWav(cleanedChunks, audioContext.sampleRate);
+        if (wavBuffer.byteLength < 2400) {
           setVoiceStatus('Recording too short');
           addSystemMessage('RECORDING TOO SHORT\nPress the mic, speak your full sentence clearly, then press the mic again when finished.');
           return;
         }
 
-        const audioBase64 = await blobToBase64(blob);
-        const transcript = await transcribeAudioCommand(audioBase64, mimeType);
+        const audioBase64 = arrayBufferToBase64(wavBuffer);
+        const transcript = await transcribeAudioCommand(audioBase64, 'audio/wav');
 
         if (wakePhraseCheck) {
           setLiveTranscript(transcript || '');
@@ -928,17 +1706,12 @@ export const Terminal: React.FC = () => {
               setVoiceStatus('Command captured');
               await handleSendText(wakeCommand);
             } else {
-              shouldListenRef.current = true;
-              setIsListening(true);
+              shouldListenRef.current = false;
+              setIsListening(false);
               assistantSpeakingRef.current = false;
               speechSuppressionUntilRef.current = 0;
-              setVoiceStatus('Listening for command');
-              try {
-                recognitionRef.current?.stop();
-              } catch {
-                // Recognition may already be cycling.
-              }
-              restartRecognitionWhenReady(350);
+              setVoiceStatus('Hands-free listening');
+              autoRecordCooldownUntilRef.current = performance.now() + 900;
             }
           } else {
             setVoiceStatus(transcript ? 'Standby: say "Friday wake up"' : 'Wake phrase not heard');
@@ -955,7 +1728,7 @@ export const Terminal: React.FC = () => {
 
         if (!transcript) {
           setVoiceStatus('No transcript returned');
-          addSystemMessage(`GEMINI TRANSCRIPTION RETURNED EMPTY\n${getLastTranscriptionError() || 'Check GEMINI_API_KEY in .env.local, internet access, and speak clearly for 2-25 seconds.'}`);
+          addSystemMessage(`LOCAL TRANSCRIPTION RETURNED EMPTY\n${getLastTranscriptionError() || 'Speak clearly for 2-9 seconds and keep the microphone selected as the Windows default input.'}`);
           return;
         }
 
@@ -990,8 +1763,9 @@ export const Terminal: React.FC = () => {
       }
     };
 
-    recorderRef.current = recorder;
-    recorder.start(1000);
+    wavRecorderStopRef.current = () => {
+      void finishRecording();
+    };
     recordingStartedAtRef.current = performance.now();
     voiceDetectedInRecordingRef.current = false;
     silenceStartedAtRef.current = 0;
@@ -1005,7 +1779,7 @@ export const Terminal: React.FC = () => {
       setRecordingSeconds(seconds => Math.min(maxSeconds, seconds + 1));
     }, 1000);
     recordingTimerRef.current = window.setTimeout(stopGeminiRecording, wakePhraseCheck ? WAKE_PHRASE_RECORDING_MS : MAX_GEMINI_RECORDING_MS);
-  }, [addSystemMessage, handleSendText, handsFreeEnabled, refreshConversationIdleTimer, speak, startMicMeter, stopGeminiRecording, stopMicMeter, stripWakePhrase]);
+  }, [addSystemMessage, arrayBufferToBase64, cleanSpeechChunks, encodeWav, handleSendText, handsFreeEnabled, refreshConversationIdleTimer, speak, startMicMeter, stopGeminiRecording, stopMicMeter, stripWakePhrase]);
 
   useEffect(() => {
     startWakePhraseRecordingRef.current = () => {
@@ -1020,40 +1794,175 @@ export const Terminal: React.FC = () => {
   }, [startGeminiRecording]);
 
   const armClapWake = useCallback(async () => {
-    if (!speechSupported) {
-      setSpeechMode('browser');
-      setVoiceStatus('Browser speech recognition unavailable');
-      addSystemMessage('LOCAL VOICE MODE NEEDS BROWSER SPEECH RECOGNITION\nGemini STT is disabled. Use Microsoft Edge or Chrome speech recognition, or install a native offline STT runtime later.');
+    const micReady = await startMicMeter();
+    if (!micReady) {
+      if (!clapArmTimerRef.current) {
+        setVoiceStatus('Microphone warming up; retrying double clap listener');
+        clapArmTimerRef.current = window.setTimeout(() => {
+          clapArmTimerRef.current = null;
+          setVoiceArmRequestId(Date.now());
+        }, 2500);
+      }
       return;
     }
-
-    const micReady = await startMicMeter();
-    if (!micReady) return;
 
     setSpeechMode('browser');
     setLiveTranscript('');
     setIsClapArmed(true);
     isClapArmedRef.current = true;
     setClapDebug({ peak: 0, rms: 0 });
-    setVoiceStatus(speechSupported ? 'Listening for "Friday wake up"' : 'Say "Friday wake up" to activate');
-
-    if (speechSupported) {
-      shouldListenRef.current = true;
-      setIsListening(true);
-    }
+    setVoiceStatus('Listening for double clap');
+    shouldListenRef.current = false;
+    setIsListening(false);
 
     if (clapArmTimerRef.current) {
       window.clearTimeout(clapArmTimerRef.current);
       clapArmTimerRef.current = null;
     }
-  }, [addSystemMessage, speechSupported, startMicMeter, stopMicMeter]);
+  }, [startMicMeter]);
 
   useEffect(() => {
     if (!voiceArmRequestId) return;
     void armClapWake();
   }, [armClapWake, voiceArmRequestId]);
 
+  const runDesktopEngage = useCallback((force = false) => {
+    if (typeof window === 'undefined') return;
+
+    const now = performance.now();
+    if (!force && now - lastDesktopEngageAtRef.current < 30000) return;
+    lastDesktopEngageAtRef.current = now;
+
+    window.setTimeout(async () => {
+      conversationActiveRef.current = true;
+      setIsConversationActive(true);
+      refreshConversationIdleTimer();
+      inputRef.current?.focus();
+      setSpeechMode('browser');
+      setVoiceStatus('Local voice engaged');
+      if (MIC_ALWAYS_ON) {
+        void startMicMeter().then((ready) => {
+          if (!ready || isWindowHiddenRef.current) return;
+          conversationActiveRef.current = true;
+          setIsConversationActive(true);
+          isClapArmedRef.current = false;
+          setIsClapArmed(false);
+          shouldListenRef.current = false;
+          setIsListening(true);
+          setSpeechMode('browser');
+          setVoiceStatus(handsFreeEnabled ? 'Hands-free listening' : 'Local voice active');
+        });
+      } else {
+        void armClapWake();
+      }
+
+      const greeting = DESKTOP_BOOT_GREETINGS[Math.floor(Math.random() * DESKTOP_BOOT_GREETINGS.length)];
+      addSystemMessage(`AUTO ENGAGE\n${greeting}`);
+
+      const topHeadline = await fetchTopHeadline();
+      if (topHeadline) {
+        addSystemMessage(`GLOBAL HEADLINE\n${topHeadline.headline}\nSource: ${topHeadline.source}`);
+        speakNativeOrBrowser(`${greeting} The hottest global headline right now: ${topHeadline.headline}`);
+      } else {
+        addSystemMessage('GLOBAL HEADLINE\nI could not reach global news feeds right now.');
+        speakNativeOrBrowser(greeting);
+      }
+    }, 1200);
+  }, [addSystemMessage, armClapWake, fetchTopHeadline, handsFreeEnabled, refreshConversationIdleTimer, speakNativeOrBrowser, startMicMeter]);
+
+  useEffect(() => {
+    if (autoEngageStartedRef.current || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('desktop') && !window.fridayDesktop) return;
+
+    autoEngageStartedRef.current = true;
+    runDesktopEngage(true);
+  }, [runDesktopEngage]);
+
+  useEffect(() => {
+    const unsubscribeHidden = window.fridayDesktop?.onWindowHidden?.(() => {
+      setIsWindowHidden(true);
+      conversationActiveRef.current = false;
+      setIsConversationActive(false);
+
+      if (!clapWakeEnabledRef.current) return;
+
+      setSpeechMode('browser');
+      setLiveTranscript('');
+      setVoiceStatus('Background two-clap wake armed');
+      void armClapWake();
+    });
+
+    const unsubscribeShown = window.fridayDesktop?.onWindowShown?.(() => {
+      setIsWindowHidden(false);
+      if (suppressNextShownEngageRef.current) {
+        suppressNextShownEngageRef.current = false;
+        return;
+      }
+      runDesktopEngage(false);
+    });
+
+    return () => {
+      unsubscribeHidden?.();
+      unsubscribeShown?.();
+    };
+  }, [armClapWake, runDesktopEngage]);
+
+  useEffect(() => {
+    if (MIC_ALWAYS_ON && !isWindowHidden) return;
+    if (autoClapArmStartedRef.current || !clapWakeEnabled || isConversationActive) return;
+    autoClapArmStartedRef.current = true;
+    window.setTimeout(() => {
+      void armClapWake();
+    }, 600);
+  }, [armClapWake, clapWakeEnabled, isConversationActive, isWindowHidden]);
+
+  useEffect(() => {
+    if (!MIC_ALWAYS_ON || typeof window === 'undefined') return;
+
+    const timer = window.setTimeout(async () => {
+      if (isWindowHiddenRef.current) {
+        if (clapWakeEnabledRef.current) void armClapWake();
+        return;
+      }
+
+      const micReady = await startMicMeter();
+      if (!micReady) {
+        setIsListening(false);
+        setVoiceStatus('Microphone unavailable');
+        return;
+      }
+
+      conversationActiveRef.current = true;
+      setIsConversationActive(true);
+      isClapArmedRef.current = false;
+      setIsClapArmed(false);
+      shouldListenRef.current = false;
+      setIsListening(true);
+      setSpeechMode('browser');
+      setVoiceStatus(handsFreeEnabled ? 'Hands-free listening' : 'Local voice active');
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [armClapWake, handsFreeEnabled, startMicMeter]);
+
   const toggleListening = async () => {
+    if (MIC_ALWAYS_ON && !isWindowHiddenRef.current) {
+      const micReady = await startMicMeter();
+      if (!micReady) return;
+
+      conversationActiveRef.current = true;
+      setIsConversationActive(true);
+      isClapArmedRef.current = false;
+      setIsClapArmed(false);
+      shouldListenRef.current = false;
+      setIsListening(true);
+      setSpeechMode('browser');
+      refreshConversationIdleTimer();
+      setVoiceStatus(handsFreeEnabled ? 'Hands-free listening' : 'Local voice active');
+      return;
+    }
+
     if (clapWakeEnabled) {
       if (isRecording) {
         stopGeminiRecording();
@@ -1061,16 +1970,11 @@ export const Terminal: React.FC = () => {
       }
 
       if (isConversationActive) {
-        if (!speechSupported) {
-          setVoiceStatus('Browser speech recognition unavailable');
-          addSystemMessage('VOICE COMMANDS UNAVAILABLE\nGemini STT is disabled, and this browser is not exposing speech recognition.');
-          return;
-        }
-
         setSpeechMode('browser');
-        shouldListenRef.current = true;
-        setIsListening(true);
-        setVoiceStatus('Listening');
+        shouldListenRef.current = false;
+        setIsListening(false);
+        setVoiceStatus('Recording command');
+        await startGeminiRecording();
         return;
       }
 
@@ -1097,20 +2001,18 @@ export const Terminal: React.FC = () => {
     const micReady = await startMicMeter();
     if (!micReady) return;
 
-    if (!speechSupported) {
-      setSpeechMode('browser');
-      setVoiceStatus('Browser speech recognition unavailable');
-      addSystemMessage('BROWSER SPEECH RECOGNITION UNAVAILABLE\nGemini STT is disabled. Use Edge/Chrome speech recognition, or install a native offline STT runtime later.');
-      return;
-    }
-
+    setSpeechMode('browser');
     setLiveTranscript('');
-    setIsListening(true);
+    setIsListening(false);
+    conversationActiveRef.current = true;
+    setIsConversationActive(true);
+    refreshConversationIdleTimer();
+    await startGeminiRecording();
   };
 
   useEffect(() => {
     if (!speechSupported) {
-      setVoiceStatus('Voice input unsupported in this browser');
+      setSpeechMode('browser');
       return;
     }
 
@@ -1142,7 +2044,7 @@ export const Terminal: React.FC = () => {
             setLiveTranscript(cleanedTranscript);
             addSystemMessage(`HEARD: ${cleanedTranscript}`);
 
-            if (/\bfriday\b/.test(normalized)) {
+            if (hasWakeWord(cleanedTranscript)) {
               const wakeCommand = isFridayWakeUpPhrase(cleanedTranscript)
                 ? stripFridayWakeUpPhrase(cleanedTranscript)
                 : stripFridayAddress(cleanedTranscript);
@@ -1167,17 +2069,12 @@ export const Terminal: React.FC = () => {
                 setVoiceStatus('Command captured');
                 void handleSendText(wakeCommand);
               } else {
-                shouldListenRef.current = true;
-                setIsListening(true);
+                shouldListenRef.current = false;
+                setIsListening(false);
                 assistantSpeakingRef.current = false;
                 speechSuppressionUntilRef.current = 0;
-                setVoiceStatus('Listening for command');
-                try {
-                  recognition.stop();
-                } catch {
-                  // Recognition may already be cycling.
-                }
-                restartRecognitionWhenReady(350);
+                setVoiceStatus('Hands-free listening');
+                autoRecordCooldownUntilRef.current = performance.now() + 900;
               }
             } else {
               setVoiceStatus('Listening for "Friday wake up"');
@@ -1187,7 +2084,7 @@ export const Terminal: React.FC = () => {
           }
 
           if (wakeModeRef.current) {
-            const wakeIndex = conversationActiveRef.current ? -1 : normalized.indexOf('friday');
+            const wakeIndex = conversationActiveRef.current ? -1 : findWakeWordIndex(cleanedTranscript);
             if (!conversationActiveRef.current && wakeIndex === -1) {
               setVoiceStatus(`Mic active; say "Friday" first`);
               continue;
@@ -1195,7 +2092,7 @@ export const Terminal: React.FC = () => {
 
             command = conversationActiveRef.current
               ? cleanedTranscript
-              : cleanedTranscript.slice(wakeIndex + 'friday'.length).trim();
+              : stripFridayAddress(cleanedTranscript.slice(wakeIndex)).trim();
           }
 
           if (hasCommandText(command)) {
@@ -1223,9 +2120,11 @@ export const Terminal: React.FC = () => {
         shouldListenRef.current = false;
         setIsListening(false);
         setSpeechMode('browser');
-        setVoiceStatus('Browser speech service unavailable');
-        addSystemMessage('BROWSER SPEECH SERVICE FAILED\nGemini STT is disabled, so FRIDAY will not fall back to quota-limited transcription. Try Edge/Chrome again, or we can add a native offline runtime once the Windows build tools are available.');
-        stopMicMeter();
+        setVoiceStatus('Local Whisper active');
+        if (!browserSpeechFailed) {
+          setBrowserSpeechFailed(true);
+          addSystemMessage('BROWSER SPEECH SERVICE FAILED\nFRIDAY will ignore the browser speech service and keep using local Whisper transcription.');
+        }
         return;
       }
 
@@ -1276,7 +2175,7 @@ export const Terminal: React.FC = () => {
       shouldListenRef.current = false;
       recognition.stop();
     };
-  }, [addSystemMessage, handleSendText, restartRecognitionWhenReady, speechSupported, stopMicMeter]);
+  }, [addSystemMessage, browserSpeechFailed, handleSendText, nativeVoiceAvailable, nativeVoiceBlocked, restartRecognitionWhenReady, speechSupported, startMicMeter, stopMicMeter]);
 
   useEffect(() => {
     shouldListenRef.current = isListening;
@@ -1316,7 +2215,7 @@ export const Terminal: React.FC = () => {
         <div className="flex items-center justify-between px-4 py-2 bg-terminal-border/50 border-b border-terminal-border select-none">
           <div className="flex items-center gap-2">
             <TerminalIcon size={16} className="text-terminal-accent" />
-            <span className="text-[10px] font-mono uppercase tracking-widest text-terminal-accent/80">FRIDAY OS v1.3.0 - Hands-Free Interface</span>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-terminal-accent/80">F.R.I.D.A.Y OS v1.3.0 - Hands-Free Interface</span>
           </div>
           <div className="items-center gap-4 text-[10px] font-mono text-terminal-accent/40 hidden md:flex">
             <div className="flex items-center gap-1"><Cpu size={10} /> <span>CPU: 4%</span></div>
@@ -1336,7 +2235,7 @@ export const Terminal: React.FC = () => {
             onClick={toggleListening}
             disabled={!micSupported || isTranscribing}
             className={`h-9 w-9 inline-flex items-center justify-center rounded border transition-colors ${isListening || isRecording || isClapArmed || isConversationActive ? 'border-terminal-green text-terminal-green bg-terminal-green/10' : 'border-terminal-border text-terminal-accent hover:bg-terminal-accent/10'} disabled:cursor-not-allowed disabled:opacity-40`}
-            title={clapWakeEnabled ? isConversationActive ? 'Listen for next conversation turn' : 'Arm Friday wake up' : isListening ? 'Stop voice input' : 'Start browser voice input'}
+            title={clapWakeEnabled ? isWindowHidden ? 'Background two-clap launcher armed' : isConversationActive ? 'Conversation active' : 'Two-clap launcher ready when hidden' : isListening ? 'Stop voice input' : 'Start voice input'}
           >
             {isClapArmed ? <Hand size={16} /> : isListening || isRecording ? <Mic size={16} /> : <MicOff size={16} />}
           </button>
@@ -1375,7 +2274,7 @@ export const Terminal: React.FC = () => {
               }
             }}
             className={`h-9 w-9 inline-flex items-center justify-center rounded border transition-colors ${clapWakeEnabled ? 'border-terminal-green text-terminal-green bg-terminal-green/10' : 'border-terminal-border text-terminal-text/60 hover:bg-white/5'}`}
-            title={clapWakeEnabled ? 'Friday wake up on' : 'Friday wake up off'}
+            title={clapWakeEnabled ? 'Background two-clap launcher on' : 'Background two-clap launcher off'}
           >
             <Hand size={16} />
           </button>
@@ -1395,14 +2294,22 @@ export const Terminal: React.FC = () => {
           >
             <SlidersHorizontal size={16} />
           </button>
+          <button
+            type="button"
+            onClick={() => setShowLlmForm(prev => !prev)}
+            className={`h-9 w-9 inline-flex items-center justify-center rounded border transition-colors ${showLlmForm ? 'border-terminal-green text-terminal-green bg-terminal-green/10' : 'border-terminal-border text-terminal-text/60 hover:bg-white/5'}`}
+            title="LLM form"
+          >
+            <BrainCircuit size={16} />
+          </button>
           <div className="min-w-0 flex-1 font-mono text-[11px] uppercase tracking-wider text-terminal-text/60">
             <span className="text-terminal-accent/80">{voiceStatus}</span>
             {isConversationActive && !isRecording && <span className="ml-3 text-terminal-green">Active</span>}
             {isConversationActive && handsFreeEnabled && !isRecording && <span className="ml-3 text-terminal-green/70">Auto</span>}
             {isRecording && <span className="ml-3 text-terminal-green">{recordingSeconds}s / {isWakePhraseRecording ? WAKE_PHRASE_RECORDING_MS / 1000 : MAX_GEMINI_RECORDING_MS / 1000}s</span>}
-            {isClapArmed && <span className="ml-3 text-terminal-green">wake armed</span>}
+            {isClapArmed && <span className="ml-3 text-terminal-green">{isWindowHidden ? 'background 2-clap armed' : '2-clap ready'}</span>}
             {isClapArmed && <span className="ml-3 text-terminal-text/40">peak {clapDebug.peak} rms {clapDebug.rms}</span>}
-            <span className="ml-3 text-terminal-green/70">No-Gemini Browser STT</span>
+            <span className="ml-3 text-terminal-green/70">{speechMode === 'native' ? 'Windows Voice' : 'Local Whisper'}</span>
             {liveTranscript && <span className="ml-3 normal-case tracking-normal text-terminal-text/50">{liveTranscript}</span>}
           </div>
           <div className="h-2 w-28 overflow-hidden rounded bg-terminal-border" title="Microphone input level">
@@ -1414,22 +2321,61 @@ export const Terminal: React.FC = () => {
         </div>
 
         {showVoiceControls && (
-          <div className="grid gap-3 border-b border-terminal-border bg-black/60 px-4 py-3 md:grid-cols-[minmax(220px,1fr)_160px_160px_96px]">
+          <div className="grid gap-3 border-b border-terminal-border bg-black/60 px-4 py-3 md:grid-cols-[180px_minmax(220px,1fr)_150px_150px_120px_44px]">
+            <select
+              value={selectedVoiceProfileId}
+              onChange={(event) => {
+                const profile = voiceProfiles.find(item => item.id === event.target.value);
+                if (profile) applyVoiceProfile(profile);
+              }}
+              className="h-9 min-w-0 rounded border border-terminal-border bg-terminal-bg px-2 font-mono text-xs text-terminal-text outline-none focus:border-terminal-accent"
+              title="Voice profile"
+            >
+              {selectedVoiceProfileId === 'custom-live' && <option value="custom-live">Unsaved Custom</option>}
+              <optgroup label="Built-in profiles">
+                {BUILT_IN_VOICE_PROFILES.map(profile => (
+                  <option key={profile.id} value={profile.id}>{profile.name}</option>
+                ))}
+              </optgroup>
+              {customVoiceProfiles.length > 0 && (
+                <optgroup label="Custom profiles">
+                  {customVoiceProfiles.map(profile => (
+                    <option key={profile.id} value={profile.id}>{profile.name}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
             <select
               value={selectedVoiceURI}
-              onChange={(event) => setSelectedVoiceURI(event.target.value)}
+              onChange={(event) => {
+                setSelectedVoiceURI(event.target.value);
+                setSelectedVoiceProfileId('custom-live');
+              }}
               className="h-9 min-w-0 rounded border border-terminal-border bg-terminal-bg px-2 font-mono text-xs text-terminal-text outline-none focus:border-terminal-accent"
               title="FRIDAY voice"
             >
-              {availableVoices.length === 0 && <option value="">System default voice</option>}
-              {availableVoices.map(voice => {
-                const id = voice.voiceURI || voice.name;
-                return (
-                  <option key={id} value={id}>
-                    {voice.name} ({voice.lang})
-                  </option>
-                );
-              })}
+              {availableVoices.length === 0 && nativeVoices.length === 0 && <option value="">System default voice</option>}
+              {nativeVoices.length > 0 && (
+                <optgroup label="Windows voices">
+                  {nativeVoices.map(voice => (
+                    <option key={`native:${voice.Name}`} value={`native:${voice.Name}`}>
+                      {voice.Name} ({voice.Culture || 'Windows'})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {availableVoices.length > 0 && (
+                <optgroup label="Browser voices">
+                  {availableVoices.map(voice => {
+                    const id = voice.voiceURI || voice.name;
+                    return (
+                      <option key={id} value={id}>
+                        {voice.name} ({voice.lang})
+                      </option>
+                    );
+                  })}
+                </optgroup>
+              )}
             </select>
             <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-terminal-text/60">
               Rate
@@ -1439,7 +2385,10 @@ export const Terminal: React.FC = () => {
                 max="1.2"
                 step="0.02"
                 value={voiceRate}
-                onChange={(event) => setVoiceRate(Number(event.target.value))}
+                onChange={(event) => {
+                  setVoiceRate(Number(event.target.value));
+                  setSelectedVoiceProfileId('custom-live');
+                }}
                 className="min-w-0 flex-1"
               />
             </label>
@@ -1451,18 +2400,96 @@ export const Terminal: React.FC = () => {
                 max="1.35"
                 step="0.02"
                 value={voicePitch}
-                onChange={(event) => setVoicePitch(Number(event.target.value))}
+                onChange={(event) => {
+                  setVoicePitch(Number(event.target.value));
+                  setSelectedVoiceProfileId('custom-live');
+                }}
                 className="min-w-0 flex-1"
               />
             </label>
             <button
               type="button"
-              onClick={() => speak('Voice calibration complete. FRIDAY is online and listening for Friday wake up, Sir.')}
+              onClick={() => speak('Voice calibration complete. Friday is online and listening for Friday wake up, Sir.')}
               className="h-9 rounded border border-terminal-accent px-3 font-mono text-xs uppercase tracking-wider text-terminal-accent hover:bg-terminal-accent/10"
             >
               Test
             </button>
+            <button
+              type="button"
+              onClick={deleteVoiceProfile}
+              disabled={!customVoiceProfiles.some(profile => profile.id === selectedVoiceProfileId)}
+              className="h-9 rounded border border-terminal-border px-3 font-mono text-xs uppercase tracking-wider text-terminal-text/70 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-30"
+              title="Delete custom profile"
+            >
+              <Trash2 size={15} />
+            </button>
+            <input
+              type="text"
+              value={customVoiceProfileName}
+              onChange={(event) => setCustomVoiceProfileName(event.target.value)}
+              className="h-9 min-w-0 rounded border border-terminal-border bg-terminal-bg px-3 font-mono text-xs text-terminal-text outline-none placeholder:text-terminal-border focus:border-terminal-accent md:col-span-2"
+              placeholder="Profile name"
+            />
+            <button
+              type="button"
+              onClick={saveVoiceProfile}
+              className="h-9 rounded border border-terminal-accent px-3 font-mono text-xs uppercase tracking-wider text-terminal-accent transition-colors hover:bg-terminal-accent/10 md:col-span-2"
+              title="Save voice profile"
+            >
+              <span className="inline-flex items-center justify-center gap-2"><Save size={14} /> Save Profile</span>
+            </button>
           </div>
+        )}
+
+        {showLlmForm && (
+          <form
+            onSubmit={handleLlmFormSubmit}
+            className="grid gap-3 border-b border-terminal-border bg-black/60 px-4 py-3 md:grid-cols-[160px_minmax(220px,1fr)_minmax(220px,1fr)_180px_92px]"
+          >
+            <select
+              value={llmForm.mode}
+              onChange={(event) => setLlmForm(prev => ({ ...prev, mode: event.target.value }))}
+              className="h-9 min-w-0 rounded border border-terminal-border bg-terminal-bg px-2 font-mono text-xs text-terminal-text outline-none focus:border-terminal-accent"
+              title="LLM mode"
+            >
+              <option>Assistant</option>
+              <option>Code</option>
+              <option>Research</option>
+              <option>Plan</option>
+              <option>Rewrite</option>
+            </select>
+            <input
+              type="text"
+              value={llmForm.task}
+              onChange={(event) => setLlmForm(prev => ({ ...prev, task: event.target.value }))}
+              className="h-9 min-w-0 rounded border border-terminal-border bg-terminal-bg px-3 font-mono text-xs text-terminal-text outline-none placeholder:text-terminal-border focus:border-terminal-accent"
+              placeholder="Task"
+              disabled={isProcessing}
+            />
+            <input
+              type="text"
+              value={llmForm.context}
+              onChange={(event) => setLlmForm(prev => ({ ...prev, context: event.target.value }))}
+              className="h-9 min-w-0 rounded border border-terminal-border bg-terminal-bg px-3 font-mono text-xs text-terminal-text outline-none placeholder:text-terminal-border focus:border-terminal-accent"
+              placeholder="Context"
+              disabled={isProcessing}
+            />
+            <input
+              type="text"
+              value={llmForm.output}
+              onChange={(event) => setLlmForm(prev => ({ ...prev, output: event.target.value }))}
+              className="h-9 min-w-0 rounded border border-terminal-border bg-terminal-bg px-3 font-mono text-xs text-terminal-text outline-none placeholder:text-terminal-border focus:border-terminal-accent"
+              placeholder="Output style"
+              disabled={isProcessing}
+            />
+            <button
+              type="submit"
+              disabled={isProcessing || !llmForm.task.trim()}
+              className="h-9 rounded border border-terminal-accent px-3 font-mono text-xs uppercase tracking-wider text-terminal-accent transition-colors hover:bg-terminal-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Run
+            </button>
+          </form>
         )}
 
         <div
@@ -1498,9 +2525,8 @@ export const Terminal: React.FC = () => {
             autoFocus
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            disabled={isProcessing}
             className="flex-1 min-w-0 bg-transparent border-none outline-none text-terminal-text font-mono text-sm placeholder:text-terminal-border"
-            placeholder={isProcessing ? "FRIDAY is thinking..." : "Enter command, or say: Friday status"}
+            placeholder={isProcessing ? "FRIDAY is thinking; you can queue your next line here..." : "Enter command, or say: Friday status"}
             spellCheck={false}
             autoComplete="off"
           />

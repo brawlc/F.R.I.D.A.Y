@@ -1,7 +1,7 @@
 {
-  "name": "FRIDAY AI",
-  "short_name": "FRIDAY",
-  "description": "Desktop voice command interface for FRIDAY AI.",
+  "name": "F.R.I.D.A.Y",
+  "short_name": "F.R.I.D.A.Y",
+  "description": "Desktop voice command interface for F.R.I.D.A.Y.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
