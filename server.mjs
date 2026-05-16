@@ -1194,6 +1194,38 @@ const desktopActions = {
     args: ['user32.dll,LockWorkStation'],
     delayMs: 1800,
   },
+  'shutdown computer': {
+    patterns: [
+      /^\s*shutdown\s*$/i,
+      /\bshutdown (?:my |the )?(?:pc|computer|system|machine)\b/i,
+      /\bturn off (?:my |the )?(?:pc|computer|system|machine)\b/i,
+      /\bpower off (?:my |the )?(?:pc|computer|system|machine)\b/i,
+    ],
+    message: 'Shutting down this PC in 5 seconds.',
+    command: 'shutdown.exe',
+    args: ['/s', '/t', '5'],
+  },
+  'restart computer': {
+    patterns: [
+      /^\s*(?:restart|reboot)\s*$/i,
+      /\brestart (?:my |the )?(?:pc|computer|system|machine)\b/i,
+      /\breboot (?:my |the )?(?:pc|computer|system|machine)\b/i,
+    ],
+    message: 'Restarting this PC in 5 seconds.',
+    command: 'shutdown.exe',
+    args: ['/r', '/t', '5'],
+  },
+  'sleep computer': {
+    patterns: [
+      /^\s*sleep\s*$/i,
+      /\b(?:put|send) (?:my |the )?(?:pc|computer|system|machine) to sleep\b/i,
+      /\bsleep (?:my |the )?(?:pc|computer|system|machine)\b/i,
+    ],
+    message: 'Putting this PC to sleep.',
+    command: 'rundll32.exe',
+    args: ['powrprof.dll,SetSuspendState', '0,1,0'],
+    delayMs: 1200,
+  },
   'open task manager': {
     patterns: [/\b(task manager|taskmgr)\b/i],
     message: 'Opening Task Manager.',

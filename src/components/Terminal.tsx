@@ -1400,7 +1400,7 @@ export const Terminal: React.FC = () => {
     }
 
     if (cmd === 'help') {
-      return `AVAILABLE SYSTEM COMMANDS:\n- open instagram/youtube/google/gmail/whatsapp/chatgpt/github/jio hotstar: Open site in browser\n- open chrome/opera gx/notepad/calculator/camera/settings/microphone settings/speech settings/voice training/explorer/downloads/documents/desktop/vscode: Open approved local apps and folders\n- close opera gx/chrome/notepad/calculator/vscode: Close approved local apps\n- lock screen / open task manager: Run approved Windows actions\n- clear/cls: Clear the terminal screen\n- time: Display system clock\n- help: Show this menu\n- status: Diagnostic overview\n- listen: Enable manual voice input\n- stop listening: Disable voice and clap input\n- sleep/stand down/go idle: End active conversation\n- mute/unmute: Toggle spoken responses\n\nVoice: FRIDAY uses manual voice input. Press the mic when you want to speak.`;
+      return `AVAILABLE SYSTEM COMMANDS:\n- open instagram/youtube/google/gmail/whatsapp/chatgpt/github/jio hotstar: Open site in browser\n- open chrome/opera gx/notepad/calculator/camera/settings/microphone settings/speech settings/voice training/explorer/downloads/documents/desktop/vscode: Open approved local apps and folders\n- close opera gx/chrome/notepad/calculator/vscode: Close approved local apps\n- lock screen / restart computer / shutdown computer / sleep computer / open task manager: Run approved Windows actions\n- clear/cls: Clear the terminal screen\n- time: Display system clock\n- help: Show this menu\n- status: Diagnostic overview\n- listen: Enable manual voice input\n- stop listening: Disable voice and clap input\n- stand down/go idle: End active conversation\n- mute/unmute: Toggle spoken responses\n\nVoice: FRIDAY uses manual voice input. Press the mic when you want to speak.`;
     }
 
     if (
@@ -1443,7 +1443,7 @@ export const Terminal: React.FC = () => {
       return 'Voice input disabled.';
     }
 
-    if (cmd === 'sleep' || cmd === 'stand down' || cmd === 'go idle') {
+    if (cmd === 'stand down' || cmd === 'go idle') {
       endConversation('Conversation idle.');
       return 'Standing down. Press the mic or type when you need me again.';
     }
@@ -1537,7 +1537,10 @@ export const Terminal: React.FC = () => {
     if (/\b(open|show)\b.*\b(?:search results|google results|results page)\b/.test(cmd)) return true;
     return false;
   };
-  const isDesktopActionCommand = (cmd: string) => /\b(lock|task manager|taskmgr|battery|power level|charge|battery life)\b/.test(cmd);
+  const isDesktopActionCommand = (cmd: string) => /^(?:sleep|shutdown|restart|reboot)$/.test(cmd)
+    || /\b(lock|task manager|taskmgr|battery|power level|charge|battery life|shutdown|turn off|power off|restart|reboot)\b/.test(cmd)
+    || /\b(?:put|send) (?:my |the )?(?:pc|computer|system|machine) to sleep\b/.test(cmd)
+    || /\bsleep (?:my |the )?(?:pc|computer|system|machine)\b/.test(cmd);
   const isDesktopCloseCommand = (cmd: string) => /\b(close|quit|exit|kill|terminate|shut)\b/.test(cmd);
   const splitParagraphInstructions = (rawCommand: string) => {
     const command = rawCommand
