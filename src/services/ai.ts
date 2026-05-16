@@ -22,6 +22,12 @@ function cleanProviderError(message: string, label = 'AI provider') {
   return message;
 }
 
+function cleanTranscript(text = '') {
+  const cleaned = text.trim();
+  if (/^\[(?:BLANK_AUDIO|MUSIC|SILENCE|NO_SPEECH)\]$/i.test(cleaned)) return '';
+  return cleaned;
+}
+
 export async function transcribeAudioCommand(audioBase64: string, mimeType: string) {
   lastTranscriptionError = '';
 
@@ -35,7 +41,7 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
 
       if (wavResponse.ok) {
         const result = await wavResponse.json() as { ok?: boolean; text?: string };
-        return result.text?.trim() || '';
+        return cleanTranscript(result.text);
       }
 
       const result = await wavResponse.json().catch(() => null) as { error?: string } | null;
@@ -52,7 +58,7 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
 
     if (localResponse.ok) {
       const result = await localResponse.json() as { ok?: boolean; text?: string };
-      return result.text?.trim() || '';
+      return cleanTranscript(result.text);
     }
 
     const result = await localResponse.json().catch(() => null) as { error?: string } | null;

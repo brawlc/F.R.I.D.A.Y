@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('fridayDesktop', {
   showWindow: () => ipcRenderer.send('friday:show-window'),
+  focusWindow: () => ipcRenderer.send('friday:focus-window'),
+  exitFullscreen: () => ipcRenderer.send('friday:exit-fullscreen'),
   restartNativeVoice: () => ipcRenderer.invoke('friday:restart-native-voice'),
   openExternalUrl: (url) => ipcRenderer.invoke('friday:open-external-url', url),
   onWindowHidden: (callback) => {
@@ -10,7 +12,7 @@ contextBridge.exposeInMainWorld('fridayDesktop', {
     return () => ipcRenderer.removeListener('friday:window-hidden', listener);
   },
   onWindowShown: (callback) => {
-    const listener = () => callback();
+    const listener = (_event, detail) => callback(detail);
     ipcRenderer.on('friday:window-shown', listener);
     return () => ipcRenderer.removeListener('friday:window-shown', listener);
   },

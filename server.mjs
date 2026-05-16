@@ -20,7 +20,7 @@ const canUseDesktopBridge = process.platform === 'win32' && !process.env.RENDER;
 const useOllama = process.env.FRIDAY_USE_OLLAMA !== 'false';
 const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
 const ollamaModel = process.env.OLLAMA_MODEL || 'llama3.1:latest';
-const useGemini = process.env.FRIDAY_USE_GEMINI === 'true';
+const useGemini = process.env.FRIDAY_USE_GEMINI !== 'false';
 const gemini = useGemini && process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 const modelOrder = String(process.env.FRIDAY_MODEL_ORDER || (gemini ? 'gemini,ollama' : 'ollama,gemini'))
   .split(',')
@@ -574,7 +574,7 @@ app.post('/api/transcribe-wav', async (req, res) => {
 });
 
 function wantsWeather(text) {
-  return /\b(weather|temperature|forecast|rain|humidity|wind|climate)\b/i.test(text);
+  return /\b(weather|wether|temperature|forecast|rain|humidity|wind|climate)\b/i.test(text);
 }
 
 function wantsTime(text) {
@@ -611,6 +611,7 @@ async function getWeatherSummary(query = '') {
   const locationMatch = normalized.match(/\b(?:in|for|at|near)\s+([a-zA-Z\s,-]{2,60})$/i);
   const location = locationMatch?.[1]?.trim() || '';
   const target = location || '';
+  const wantsTomorrow = /\btomorrow\b/i.test(normalized);
   const url = `https://wttr.in/${encodeURIComponent(target)}?format=j1`;
 
   const response = await fetchWithTimeout(url, {
@@ -629,6 +630,20 @@ async function getWeatherSummary(query = '') {
   const area = data?.nearest_area?.[0];
   const city = area?.areaName?.[0]?.value || area?.region?.[0]?.value || (location || 'your area');
   const country = area?.country?.[0]?.value || '';
+
+  if (wantsTomorrow && Array.isArray(data?.weather) && data.weather[1]) {
+    const forecast = data.weather[1];
+    const hourly = Array.isArray(forecast.hourly) ? forecast.hourly : [];
+    const midday = hourly.find(item => String(item?.time) === '1200') || hourly[Math.floor(hourly.length / 2)] || {};
+    const condition = midday?.weatherDesc?.[0]?.value || 'conditions unavailable';
+    return [
+      `Tomorrow in ${city}${country ? `, ${country}` : ''}: ${condition}.`,
+      `Temperature: ${forecast.mintempC} C to ${forecast.maxtempC} C.`,
+      `Around midday: feels like ${midday.FeelsLikeC || 'unavailable'} C, humidity ${midday.humidity || 'unavailable'}%, wind ${midday.windspeedKmph || 'unavailable'} km/h.`,
+      `Rain chance: ${midday.chanceofrain || 'unavailable'}%.`,
+    ].join('\n');
+  }
+
   const condition = current?.weatherDesc?.[0]?.value || 'conditions unavailable';
   const tempC = current?.temp_C;
   const feelsC = current?.FeelsLikeC;
@@ -683,8 +698,8 @@ async function getLocalBrainResponse(text) {
 
   if (/\b(gemini|google ai)\b/i.test(lower)) {
     return gemini
-      ? 'Gemini is temporarily enabled, but FRIDAY now prefers Ollama locally for general reasoning.'
-      : 'Gemini is disabled by default. FRIDAY now uses Ollama locally for general reasoning when available.';
+      ? 'Gemini fallback is available automatically when the local model is unavailable.'
+      : 'Gemini fallback needs GEMINI_API_KEY in .env.local. Once the key is present, FRIDAY will use it automatically.';
   }
 
   if (/\b(ollama|local model|local mind|llama)\b/i.test(lower)) {
@@ -872,7 +887,7 @@ app.post('/api/chat', async (req, res) => {
 
         res.json({
           ok: true,
-          text: `Ollama local mind is enabled, but I could not reach it: ${error instanceof Error ? error.message : 'Unknown error'}. Start Ollama or temporarily enable Gemini.`,
+          text: `Ollama is unavailable: ${error instanceof Error ? error.message : 'Unknown error'}. Gemini fallback will start automatically when GEMINI_API_KEY is present in .env.local.`,
         });
         return;
       }

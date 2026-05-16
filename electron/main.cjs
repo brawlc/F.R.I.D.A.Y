@@ -11,6 +11,13 @@ let voiceProcess;
 let nativeVoiceRestarting = false;
 let nativeVoiceAutoRestartTimer;
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.exit(0);
+  process.exit(0);
+}
+
 async function isLocalServerReady() {
   try {
     const statusResponse = await fetch('http://127.0.0.1:3000/api/desktop/status');
@@ -46,7 +53,7 @@ async function waitForServer(retries = 60) {
   }
 }
 
-function showFridayWindow() {
+function showFridayWindow(forceEngage = false) {
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.setOpacity(1);
@@ -55,8 +62,30 @@ function showFridayWindow() {
   mainWindow.show();
   mainWindow.focus();
   if (!mainWindow.webContents.isDestroyed()) {
-    mainWindow.webContents.send('friday:window-shown');
+    mainWindow.webContents.send('friday:window-shown', { forceEngage });
   }
+}
+
+function focusFridayWindow(forceEngage = true) {
+  if (!mainWindow) return;
+  showFridayWindow(forceEngage);
+  if (!mainWindow.isFullScreen()) {
+    mainWindow.setFullScreen(true);
+  }
+}
+
+function exitFridayFullScreen() {
+  if (!mainWindow) return;
+  if (mainWindow.isFullScreen()) {
+    mainWindow.setFullScreen(false);
+  }
+  showFridayWindow(false);
+}
+
+function toggleFridayFullScreen() {
+  if (!mainWindow) return;
+  showFridayWindow(false);
+  mainWindow.setFullScreen(!mainWindow.isFullScreen());
 }
 
 function sendNativeVoiceStatus(status) {
@@ -177,14 +206,36 @@ function createWindow() {
     width: 1200,
     height: 780,
     show: true,
+    autoHideMenuBar: true,
     backgroundColor: '#050505',
     title: 'F.R.I.D.A.Y',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#05080b',
+      symbolColor: '#67e8f9',
+      height: 32,
+    },
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
     },
+  });
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+
+    if (input.key === 'Escape') {
+      exitFridayFullScreen();
+      event.preventDefault();
+      return;
+    }
+
+    if (input.key === 'F11') {
+      toggleFridayFullScreen();
+      event.preventDefault();
+    }
   });
 
   mainWindow.on('close', (event) => {
@@ -207,14 +258,20 @@ function createWindow() {
   });
 
   mainWindow.loadURL(appUrl);
-  mainWindow.once('ready-to-show', showFridayWindow);
+  mainWindow.once('ready-to-show', () => showFridayWindow(true));
   // Command speech now uses the browser mic meter plus local Whisper. The
   // Windows recognizer is intentionally not started because it is blocked on
   // some Windows installs and can steal/confuse command transcripts.
 }
 
+app.on('second-instance', () => {
+  focusFridayWindow(true);
+});
+
 app.whenReady().then(async () => {
-  ipcMain.on('friday:show-window', showFridayWindow);
+  ipcMain.on('friday:show-window', () => showFridayWindow(true));
+  ipcMain.on('friday:focus-window', () => focusFridayWindow(true));
+  ipcMain.on('friday:exit-fullscreen', () => exitFridayFullScreen());
   ipcMain.handle('friday:restart-native-voice', async () => {
     sendNativeVoiceStatus('Windows native voice is disabled; using local Whisper.');
     return false;
@@ -241,5 +298,5 @@ app.on('window-all-closed', (event) => {
 });
 
 app.on('activate', () => {
-  showFridayWindow();
+  showFridayWindow(true);
 });
