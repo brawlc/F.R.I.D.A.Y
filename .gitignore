@@ -6,3 +6,12 @@ coverage/
 *.log
 .env*
 !.env.example
+friday-memory.json
+.friday-research/
+generated-crms/
+.friday-re/
+.friday-re-test-*/
+.friday-re-debug*/
+.friday-website-studio-test-*/
+# Local screenshots, scan results, logs and disposable browser test profiles.
+/work/

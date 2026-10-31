@@ -1,6 +1,5 @@
 $ErrorActionPreference = "Stop"
-$TaskName = "FRIDAY AI Screensaver"
+$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Uninstaller = Join-Path $ProjectRoot "backend\scripts\uninstall-friday-screensaver.ps1"
 
-schtasks.exe /Delete /TN $TaskName /F | Out-Host
-
-Write-Host "FRIDAY screensaver mode removed."
+& $Uninstaller

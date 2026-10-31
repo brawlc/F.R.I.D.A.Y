@@ -4,12 +4,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Launcher = Join-Path $ProjectRoot "start-friday-desktop.ps1"
+$Launcher = Join-Path $ProjectRoot "backend\scripts\show-friday-screensaver.ps1"
 
-Set-Location -LiteralPath $ProjectRoot
-
-Start-Process `
-  -FilePath "powershell.exe" `
-  -ArgumentList "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Launcher`" -Port $Port" `
-  -WorkingDirectory $ProjectRoot `
-  -WindowStyle Hidden
+& $Launcher -Port $Port

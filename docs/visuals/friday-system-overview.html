@@ -1,0 +1,62 @@
+<div id="friday-system-overview">
+  <style>
+    #friday-system-overview { color: var(--foreground); }
+    #friday-system-overview .overview-flow { display: grid; gap: 12px; }
+    #friday-system-overview .overview-row { display: grid; grid-template-columns: 150px 28px minmax(180px, 1fr) 28px minmax(230px, 1.3fr); gap: 10px; align-items: stretch; }
+    #friday-system-overview .overview-label { font-weight: 500; }
+    #friday-system-overview .overview-node { padding: 12px; background: var(--muted); }
+    #friday-system-overview .overview-node strong { display: block; font-weight: 500; }
+    #friday-system-overview .overview-node span { color: var(--muted-foreground); }
+    #friday-system-overview .overview-arrow { align-self: center; color: var(--primary); font-weight: 500; text-align: center; }
+    #friday-system-overview .overview-lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    #friday-system-overview .overview-lane { padding: 14px; background: var(--card); color: var(--card-foreground); }
+    #friday-system-overview .overview-lane h3 { margin: 0 0 8px; font-weight: 500; }
+    #friday-system-overview .overview-lane p { margin: 0; color: var(--muted-foreground); }
+    #friday-system-overview .overview-result { padding: 14px; background: var(--accent); color: var(--accent-foreground); }
+    #friday-system-overview .overview-result strong { font-weight: 500; }
+    #friday-system-overview hr { margin: 16px 0; }
+    #friday-system-overview .overview-guards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    #friday-system-overview .overview-guards div { color: var(--muted-foreground); }
+    #friday-system-overview .overview-guards strong { display: block; color: var(--foreground); font-weight: 500; }
+    @media (max-width: 760px) {
+      #friday-system-overview .overview-row, #friday-system-overview .overview-lanes, #friday-system-overview .overview-guards { grid-template-columns: 1fr; }
+      #friday-system-overview .overview-arrow { transform: rotate(90deg); min-height: 18px; }
+    }
+  </style>
+
+  <h2>FRIDAY: whole system map</h2>
+  <div class="overview-flow" role="img" aria-label="A visual map of the FRIDAY interface, reverse workbench lanes, outputs, and safety limits.">
+    <div class="overview-row">
+      <div class="overview-node"><strong>You</strong><span>Ask, upload, or paste a URL</span></div>
+      <div class="overview-arrow" aria-hidden="true">→</div>
+      <div class="overview-node"><strong>FRIDAY desktop</strong><span>Presence Feed · command terminal · memory · Reverse Workbench</span></div>
+      <div class="overview-arrow" aria-hidden="true">→</div>
+      <div class="overview-node"><strong>Reverse Workbench</strong><span>One controlled place for evidence, web observation, and original site starters</span></div>
+    </div>
+
+    <div class="overview-lanes">
+      <section class="overview-lane">
+        <h3>1. Local artifact</h3>
+        <p>File upload → authorization → hash and isolated evidence → static-only worker → format, strings, binary headers, PCAP metadata, or source architecture report.</p>
+      </section>
+      <section class="overview-lane">
+        <h3>2. Public website</h3>
+        <p>URL → authorization → public-target checks → one same-origin HTML page → visible structure, forms, assets, links, safe headers, and framework signals.</p>
+      </section>
+      <section class="overview-lane">
+        <h3>3. Website Studio</h3>
+        <p>URL + brief → authorization + original-design confirmation → high-level cues → new editable Vite + React project in Downloads.</p>
+      </section>
+    </div>
+
+    <div class="overview-result"><strong>What you get</strong> — reports in Markdown/JSON with audit history for analysis; or an editable project you open in VS Code, change in <code>src/main.jsx</code> / <code>src/styles.css</code>, then run with <code>npm install</code> and <code>npm run dev</code>.</div>
+  </div>
+
+  <hr>
+
+  <div class="overview-guards" aria-label="System safety boundaries">
+    <div><strong>Artifacts</strong>No execution, shell use, module loading, or network access from uploaded targets.</div>
+    <div><strong>Websites</strong>No login, cookies, recursive crawling, JavaScript execution, bypasses, or unseen-backend inspection.</div>
+    <div><strong>Studio builds</strong>Original implementation only: no copied site source, protected text, logos, images, or backend systems.</div>
+  </div>
+</div>

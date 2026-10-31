@@ -4,5 +4,134 @@
   "requestFramePermissions": [
     "microphone"
   ],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    {
+      "category": "Core Conversation",
+      "capabilities": [
+        "Natural conversation",
+        "Human-like spoken responses",
+        "Context-aware replies",
+        "Humor and personality",
+        "Voice recognition",
+        "Tone-aware responses"
+      ]
+    },
+    {
+      "category": "Personal Assistant",
+      "capabilities": [
+        "Scheduling",
+        "Reminders",
+        "Notes and task tracking",
+        "Research assistance",
+        "Current information lookup when connected",
+        "Translation",
+        "Message drafting",
+        "iPhone call handoff through Windows Phone Link",
+        "WhatsApp Web message drafts",
+        "SMS draft handoff through local apps",
+        "Email drafts"
+      ]
+    },
+    {
+      "category": "Decision Support",
+      "capabilities": [
+        "Practical suggestions",
+        "Risk assessment",
+        "Intent detection",
+        "Language-based emotion detection",
+        "Predictive analysis",
+        "Probability calculations",
+        "Strategy recommendations",
+        "Pros and cons analysis"
+      ]
+    },
+    {
+      "category": "Desktop and Local Automation",
+      "capabilities": [
+        "Windows command help",
+        "PowerShell scripting",
+        "File organization",
+        "Local project automation",
+        "App launch guidance",
+        "Startup and desktop helper workflows"
+      ]
+    },
+    {
+      "category": "Coding and Engineering Help",
+      "capabilities": [
+        "Code explanation",
+        "Debugging help",
+        "Refactoring suggestions",
+        "Test planning",
+        "Architecture guidance",
+        "Failure prediction for software changes",
+        "CRM app generation planning",
+        "Database schema and API design",
+        "Frontend workflow design"
+      ]
+    },
+    {
+      "category": "CRM Builder",
+      "capabilities": [
+        "Natural-language CRM requirements intake",
+        "Google AI Studio prompt preparation",
+        "Local project file and VS Code build workflow",
+        "GitHub repository and commit planning",
+        "Render deployment planning",
+        "CRM security acceptance checklist",
+        "Sales, service, real estate, education, healthcare, and custom CRM planning",
+        "Lead, contact, company, deal, task, note, activity, pipeline, and dashboard modeling",
+        "Role and permission planning",
+        "Import/export and integration planning",
+        "Step-by-step CRM implementation guidance"
+      ]
+    },
+    {
+      "category": "Cybersecurity and Networking",
+      "capabilities": [
+        "Threat modeling",
+        "Defensive security reviews",
+        "Network management",
+        "Encryption and decryption guidance",
+        "Password hygiene guidance",
+        "Phishing awareness",
+        "Incident response checklists",
+        "Website and dependency hardening",
+        "Continuous read-only monitoring",
+        "Safe autonomous alert decisions"
+      ]
+    },
+    {
+      "category": "Memory and Continuity",
+      "capabilities": [
+        "Remembering user preferences",
+        "Project context tracking",
+        "Conversation summaries",
+        "Follow-up reminders",
+        "Reusable personal notes"
+      ]
+    },
+    {
+      "category": "Research and Learning",
+      "capabilities": [
+        "Source-based research",
+        "Document summarization",
+        "Physics calculations",
+        "Math support",
+        "Concept explanation",
+        "Study planning"
+      ]
+    },
+    {
+      "category": "FRIDAY Style",
+      "capabilities": [
+        "Faster response",
+        "Concise tactical tone",
+        "Calm command-line personality",
+        "JARVIS-like reasoning",
+        "System-management focus",
+        "Long-form reasoning when needed"
+      ]
+    }
+  ]
 }

@@ -1,13 +1,9 @@
+param(
+  [int]$Port = 3000
+)
+
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$NodeModules = Join-Path $ProjectRoot "node_modules"
+$Launcher = Join-Path $ProjectRoot "backend\scripts\start-friday.ps1"
 
-Set-Location -LiteralPath $ProjectRoot
-
-if (-not (Test-Path -LiteralPath $NodeModules)) {
-  Write-Host "Installing FRIDAY dependencies..."
-  npm install
-}
-
-Write-Host "Starting FRIDAY desktop app..."
-npm run desktop
+& $Launcher -Port $Port

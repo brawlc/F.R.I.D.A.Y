@@ -10,6 +10,10 @@ services:
         value: production
       - key: GEMINI_API_KEY
         sync: false
+      - key: VENICE_API_KEY
+        sync: false
+      - key: VENICE_MODEL
+        value: zai-org-glm-5
       - key: GOOGLE_SEARCH_API_KEY
         sync: false
       - key: GOOGLE_SEARCH_ENGINE_ID

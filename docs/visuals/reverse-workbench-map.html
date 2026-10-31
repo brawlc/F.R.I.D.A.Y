@@ -1,0 +1,92 @@
+<div id="reverse-workbench-map">
+  <style>
+    #reverse-workbench-map {
+      color: var(--foreground, CanvasText);
+      font: 500 14px/1.45 system-ui, sans-serif;
+    }
+    #reverse-workbench-map * { box-sizing: border-box; }
+    #reverse-workbench-map .map-title { margin: 0 0 .25rem; font-size: 1.35rem; }
+    #reverse-workbench-map .map-subtitle { margin: 0 0 1rem; color: var(--muted-foreground, GrayText); }
+    #reverse-workbench-map .lanes { display: flex; gap: .5rem; flex-wrap: wrap; margin: 0 0 1rem; }
+    #reverse-workbench-map button {
+      appearance: none; border: 1px solid var(--border, GrayText); border-radius: .5rem;
+      background: var(--background, Canvas); color: inherit; padding: .45rem .7rem; cursor: pointer;
+    }
+    #reverse-workbench-map button[aria-pressed="true"] { border-color: var(--primary, Highlight); background: var(--accent, Highlight); color: var(--accent-foreground, Canvas); }
+    #reverse-workbench-map .flow { display: grid; grid-template-columns: repeat(4, minmax(145px, 1fr)); gap: .75rem; align-items: stretch; }
+    #reverse-workbench-map .stage { border: 1px solid var(--border, GrayText); border-radius: .65rem; padding: .8rem; background: var(--card, Canvas); position: relative; }
+    #reverse-workbench-map .stage:not(:last-child)::after { content: "→"; position: absolute; right: -.6rem; top: 45%; z-index: 1; color: var(--primary, Highlight); font-size: 1.2rem; }
+    #reverse-workbench-map .step { color: var(--primary, Highlight); font-size: .75rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    #reverse-workbench-map h3 { font-size: 1rem; margin: .25rem 0 .35rem; }
+    #reverse-workbench-map ul { margin: 0; padding-left: 1.05rem; color: var(--muted-foreground, GrayText); }
+    #reverse-workbench-map .detail { margin-top: 1rem; border-inline-start: 3px solid var(--primary, Highlight); padding: .75rem 1rem; background: var(--muted, Canvas); }
+    #reverse-workbench-map .detail h3 { margin-top: 0; }
+    #reverse-workbench-map .detail p { margin: .35rem 0; }
+    #reverse-workbench-map .guardrails { margin-top: 1rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
+    #reverse-workbench-map .guardrails div { padding: .75rem; border-top: 2px solid var(--border, GrayText); }
+    #reverse-workbench-map .guardrails strong { display: block; margin-bottom: .2rem; }
+    #reverse-workbench-map .guardrails span { color: var(--muted-foreground, GrayText); }
+    @media (max-width: 760px) {
+      #reverse-workbench-map .flow, #reverse-workbench-map .guardrails { grid-template-columns: 1fr; }
+      #reverse-workbench-map .stage:not(:last-child)::after { content: "↓"; right: auto; left: 50%; top: auto; bottom: -.75rem; }
+    }
+  </style>
+
+  <h2 class="map-title">FRIDAY Reverse Workbench — how it works</h2>
+  <p class="map-subtitle">Choose a lane to see exactly what FRIDAY can inspect or create, and where the safety boundary is.</p>
+
+  <div class="lanes" role="group" aria-label="Choose a workbench lane">
+    <button type="button" data-lane="artifact" aria-pressed="true">Local artifact</button>
+    <button type="button" data-lane="website" aria-pressed="false">Public website</button>
+    <button type="button" data-lane="studio" aria-pressed="false">Website Studio</button>
+  </div>
+
+  <div class="flow" aria-label="Four-stage workbench flow">
+    <section class="stage"><div class="step">1 — Choose</div><h3>Bring in a target</h3><ul id="choose"><li>Upload a local file</li><li>Or paste a public URL</li></ul></section>
+    <section class="stage"><div class="step">2 — Confirm</div><h3>Authorize scope</h3><ul id="confirm"><li>Explicit permission</li><li>Bounded, recorded job</li></ul></section>
+    <section class="stage"><div class="step">3 — Process</div><h3>Safe analysis</h3><ul id="process"><li>Static-only inspection</li><li>Public-page observation</li></ul></section>
+    <section class="stage"><div class="step">4 — Deliver</div><h3>Useful output</h3><ul id="deliver"><li>Report + evidence trail</li><li>Or editable starter site</li></ul></section>
+  </div>
+
+  <section class="detail" aria-live="polite">
+    <h3 id="detail-title">Local artifact: safe static evidence</h3>
+    <p id="detail-copy">Upload a file (up to 8 MB), state that you are authorized, then FRIDAY calculates a hash and stores isolated evidence. A restricted worker profiles it without executing it. You receive a Markdown/JSON report and an audit trail.</p>
+    <p><strong id="detail-output">Profiles:</strong> <span id="detail-list">format and strings, PE/ELF/Mach-O headers, classic PCAP metadata, or source architecture.</span></p>
+  </section>
+
+  <div class="guardrails" aria-label="Always-on safeguards">
+    <div><strong>Never executes targets</strong><span>No shell commands, modules, or network access from uploaded artifacts.</span></div>
+    <div><strong>Website boundary</strong><span>One public, same-origin page only; no login, cookies, crawling, or bypasses.</span></div>
+    <div><strong>Original builds</strong><span>Website Studio uses high-level cues to make an editable original project—not a copied site.</span></div>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.getElementById('reverse-workbench-map');
+      const data = {
+        artifact: {
+          choose: ['Upload a local file', 'Up to 8 MB'], confirm: ['Explicit authorization', 'File hash + isolated evidence'], process: ['Static worker only', 'No execution or network'], deliver: ['Markdown / JSON report', 'Audit chain + cancellation'],
+          title: 'Local artifact: safe static evidence', copy: 'FRIDAY hashes and stores the file in isolated evidence, then a restricted worker profiles it without opening or running it.', output: 'Profiles:', list: 'format and redacted strings, PE/ELF/Mach-O headers, classic PCAP metadata, or source architecture.'
+        },
+        website: {
+          choose: ['Paste a public URL', 'One page at a time'], confirm: ['Confirm authorization', 'Public, credential-free target'], process: ['Private-address checks', 'Same-origin redirects only'], deliver: ['Observed page report', 'Clear limitations'],
+          title: 'Public website: bounded observation', copy: 'FRIDAY fetches one authorized public HTML page and reports its visible structure, safe headers, forms, assets, links, and framework signals.', output: 'It does not:', list: 'crawl, log in, retain cookies, execute JavaScript, bypass protections, probe services, or inspect unseen backends.'
+        },
+        studio: {
+          choose: ['Paste a public URL', 'Add brand + project brief'], confirm: ['Confirm original-design intent', 'Confirm authorization'], process: ['Observe high-level cues', 'Generate a new Vite + React app'], deliver: ['Project in Downloads', 'Edit in VS Code and run locally'],
+          title: 'Website Studio: original, editable starting point', copy: 'FRIDAY turns approved high-level observations into an original Vite + React project in Downloads. Open it in VS Code, change src/main.jsx or src/styles.css, then run npm install and npm run dev.', output: 'It avoids:', list: 'copying source code, logos, images, text, proprietary behavior, or backend systems from the reference.'
+        }
+      };
+      const list = (id, items) => root.querySelector('#' + id).innerHTML = items.map(item => `<li>${item}</li>`).join('');
+      root.querySelectorAll('[data-lane]').forEach(button => button.addEventListener('click', () => {
+        const lane = data[button.dataset.lane];
+        root.querySelectorAll('[data-lane]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+        ['choose', 'confirm', 'process', 'deliver'].forEach(key => list(key, lane[key]));
+        root.querySelector('#detail-title').textContent = lane.title;
+        root.querySelector('#detail-copy').textContent = lane.copy;
+        root.querySelector('#detail-output').textContent = lane.output;
+        root.querySelector('#detail-list').textContent = lane.list;
+      }));
+    })();
+  </script>
+</div>

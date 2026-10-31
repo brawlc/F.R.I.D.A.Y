@@ -1,29 +1,41 @@
 {
-  "name": "react-example",
+  "name": "friday-ai",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node server.mjs",
-    "desktop": "node electron/launch.cjs",
-    "start": "NODE_ENV=production node server.mjs",
+    "test:command-routing": "node --import tsx --test backend/test/command-routing.test.mjs",
+    "test:research": "node --test backend/research/test/*.test.mjs",
+    "dev": "node backend/server.mjs",
+    "desktop": "node backend/electron/launch.cjs",
+    "start": "node -e \"process.env.NODE_ENV='production'; import('./backend/server.mjs')\"",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "lint": "tsc --noEmit",
+    "test:reverse-engineering": "node --test --test-concurrency=1 backend/reverse-engineering/test/reverse-engineering.test.mjs",
+    "test:studio-fallback": "node backend/test/test-openai-studio.mjs",
+    "test:website-reliability": "node --test backend/test/website-reliability.test.mjs",
+    "test:system": "node --test backend/test/system-reliability.test.mjs",
+    "test:defense": "node --test backend/test/defense.test.mjs",
+    "test:whitehat": "node --test backend/test/whitehat.test.mjs",
+    "test:server-smoke": "node backend/test/server-smoke.mjs",
+    "test:code-handoff": "node backend/test/test-code-handoff.cjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
+  "overrides": { "qs": "^6.16.2" },
   "dependencies": {
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
-    "@xenova/transformers": "^2.17.2",
+    "@huggingface/transformers": "^4.3.2",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "node-edge-tts": "^1.2.12",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "vite": "^6.2.3"
@@ -32,10 +44,9 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
-    "electron": "^39.2.6",
+    "electron": "^45.1.0",
     "tailwindcss": "^4.1.14",
-    "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "tsx": "^4.23.15",
+    "typescript": "~5.8.2"
   }
 }
