@@ -6,6 +6,10 @@
 
 FRIDAY's Phase II research foundation is documented in [Research engine](docs/research-engine.md). Say or type `research <objective>` to start a local evidence-driven brief, or `research history` to reopen saved work. Validate with `npm run test:research`.
 
+The [Communications Hub](docs/communications-hub.md) routes routine notifications to ntfy and security alerts to an authorized private Telegram chat. Channels are independently opt-in; validate with `npm run test:communications`.
+
+The [daily intelligence briefing](docs/daily-intelligence.md) retrieves dated F1/aerospace reports at 09:15 IST, checks novelty, adds labeled technical analysis, and persists delivery state across restarts. See the [live source-validation report](docs/briefing-source-validation.md) for actual coverage and limitations.
+
 This contains everything you need to run your app locally.
 
 View your app in AI Studio: https://ai.studio/apps/bac3a480-e6fc-43a5-98ce-cd3cd460b06a

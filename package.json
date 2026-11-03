@@ -4,6 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:briefing": "node --test backend/briefing/test/*.test.mjs",
+    "briefing:probe": "node backend/briefing/probe.mjs",
+    "test:communications": "node --test backend/communications/test/*.test.mjs",
+    "notify:test:ntfy": "node backend/communications/manual-test.mjs",
     "test:command-routing": "node --import tsx --test backend/test/command-routing.test.mjs",
     "test:research": "node --test backend/research/test/*.test.mjs",
     "dev": "node backend/server.mjs",

@@ -13,7 +13,7 @@ await new Promise(resolve => reservation.close(resolve));
 const base = `http://127.0.0.1:${port}`;
 const child = spawn(process.execPath, ['backend/server.mjs'], {
   cwd: fileURLToPath(new URL('../../', import.meta.url)),
-  env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', NODE_ENV: 'production', FRIDAY_AUTO_MONITOR: 'false' },
+  env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', NODE_ENV: 'production', FRIDAY_AUTO_MONITOR: 'false', FRIDAY_NTFY_ENABLED: 'false', FRIDAY_TELEGRAM_ENABLED: 'false', FRIDAY_DAILY_BRIEFING_ENABLED: 'false' },
   stdio: 'ignore', windowsHide: true,
 });
 const exited = once(child, 'exit');
@@ -27,6 +27,9 @@ try {
   }
   assert.ok(ready, 'Isolated server must start');
   assert.equal((await (await fetch(`${base}/api/health`)).json()).service, 'friday');
+  const communications = await (await fetch(`${base}/api/communications/status`)).json();
+  assert.equal(communications.channels.ntfy.enabled, false);
+  assert.equal(communications.channels.telegram.outboundOnly, true);
   assert.match(await (await fetch(base)).text(), /<div id="root">/);
   assert.equal((await fetch(`${base}/gesture-control.html`)).status, 200);
   const missing = await fetch(`${base}/api/does-not-exist`);

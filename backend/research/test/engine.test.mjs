@@ -102,3 +102,10 @@ test('missing conditions use transparent exploratory defaults without a clarific
   assert.match(renderReport(report), /Exploratory assumptions/);
   assert.ok(report.experiments.every(e => e.status === 'approval-required'));
 });
+
+test('completion event follows successful persistence and delivery failures do not fail research', async () => {
+  const completed = [];
+  const { engine, records } = setup({ onCompleted: async record => { assert.ok(records.has(record.id)); completed.push(record.id); throw Error('notification failed'); } });
+  const result = await engine.run({ objective: 'Fixture objective' });
+  assert.deepEqual(completed, [result.id]); assert.equal(result.status, 'completed-with-limitations');
+});

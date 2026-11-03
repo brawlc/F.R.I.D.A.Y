@@ -21,6 +21,11 @@ import { createRetrieval } from './research/retrieval.mjs';
 import { createResearchOrchestrator } from './research/orchestrator.mjs';
 import { createResearchRouter, researchChat } from './research/router.mjs';
 import { isTimeRequest } from '../shared/conversation-intent.mjs';
+import { createCommunicationsHub, createDeliveryStore, readConfig } from './communications/hub.mjs';
+import { startBriefingScheduler } from './communications/scheduler.mjs';
+import { defenseEvents } from './communications/security-events.mjs';
+import { createNewsRetriever } from './briefing/sources.mjs';
+import { createBriefingStore, createIntelligenceBriefing } from './briefing/service.mjs';
 
 const backendDir = dirname(fileURLToPath(import.meta.url));
 const __dirname = resolve(backendDir, '..');
@@ -28,6 +33,9 @@ const electronDir = resolve(backendDir, 'electron');
 
 dotenv.config({ path: resolve(backendDir, '.env.local') });
 dotenv.config({ path: resolve(backendDir, '.env') });
+const communicationsConfig = readConfig();
+const communications = createCommunicationsHub({ config: communicationsConfig, store: createDeliveryStore(resolve(__dirname, '.friday-communications/deliveries.json')) });
+const intelligenceBriefing = createIntelligenceBriefing({ store: createBriefingStore(resolve(__dirname, '.friday-communications/intelligence')), retrieve: createNewsRetriever(), hub: communications, generate: generateResearchResponse });
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
@@ -122,12 +130,25 @@ app.use('/api/reverse-engineering/v1', createReverseEngineeringRouter({ generate
 app.use('/api/security/whitehat', createWhitehatRouter());
 app.use('/api/voice', requireLocalDefense, createVoiceRouter());
 const researchEngine = createResearchOrchestrator({
+  onCompleted: record => communications.notify({ type: 'research_completed', id: record.id, priority: 'normal' }),
   memory: createResearchMemory(resolve(__dirname, '.friday-research')),
   retrieve: createRetrieval(),
   generate: generateResearchResponse,
 });
 app.use('/api/research/v1', requireLocalDefense, createResearchRouter(researchEngine));
 app.post('/api/chat', researchChat(researchEngine, requireLocalDefense));
+app.get('/api/communications/status', requireLocalDefense, async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, ...await communications.status() });
+});
+app.get('/api/communications/briefing/status', requireLocalDefense, async (_req, res) => {
+  try { res.setHeader('Cache-Control', 'no-store'); res.json({ ok: true, ...await intelligenceBriefing.status() }); }
+  catch { res.status(500).json({ ok: false, error: 'Briefing state unavailable; existing data preserved.' }); }
+});
+app.post('/api/communications/briefing/preview', requireLocalDefense, async (_req, res) => {
+  try { res.setHeader('Cache-Control', 'no-store'); res.json({ ok: true, ...await intelligenceBriefing.run({ preview: true }) }); }
+  catch { res.status(500).json({ ok: false, error: 'Briefing preview failed; no notification was sent.' }); }
+});
 
 app.use('/api/desktop', (req, res, next) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -2466,6 +2487,7 @@ app.get('/api/security/system-protection', async (_req, res) => {
 
   try {
     const parsed = await collectDefense();
+    for (const event of defenseEvents(parsed)) void communications.notify(event).catch(() => {});
     res.setHeader('Cache-Control', 'no-store');
     res.json(parsed);
   } catch (error) {
@@ -6035,7 +6057,7 @@ function decideAutonomousMonitorAction(snapshot) {
       level: 'alert',
       action: 'notify_only',
       reason: `System score ${systemScore}/100, high project findings ${severeProjectFindings}, system findings ${systemFindings}.`,
-      allowedAutonomy: 'FRIDAY logs and alerts only. It does not change Windows settings, send messages, or close apps automatically.',
+      allowedAutonomy: 'FRIDAY logs and sends outbound alerts through explicitly enabled channels only. It does not change Windows settings or close apps automatically.',
     };
   }
 
@@ -6078,6 +6100,11 @@ async function runAutoMonitorSnapshot(reason = 'scheduled') {
   try {
     const projectResponse = await fetch(`${baseUrl}/api/security/project-audit`, { cache: 'no-store' });
     snapshot.projectAudit = await projectResponse.json().catch(() => null);
+    if (projectResponse.ok && snapshot.projectAudit?.ok) {
+      for (const finding of (snapshot.projectAudit.findings || []).filter(item => /^(high|critical)$/i.test(String(item.severity)))) {
+        void communications.notify({ type: 'suspicious_activity', id: `project:${finding.id || finding.title || 'review'}`, severity: String(finding.severity).toLowerCase(), behaviorCode: 'project_audit', detectedAt: new Date().toISOString(), containment: { status: 'not_performed' } }).catch(() => {});
+      }
+    }
     if (!projectResponse.ok || !snapshot.projectAudit?.ok) {
       errors.push(snapshot.projectAudit?.error || `Project audit returned ${projectResponse.status}.`);
     }
@@ -6163,6 +6190,7 @@ if (process.env.NODE_ENV === 'production' && existsSync(resolve(__dirname, 'dist
 
 app.listen(port, host, () => {
   console.log(`FRIDAY online: http://${host}:${port}`);
+  startBriefingScheduler(communications, { enabled: communicationsConfig.dailyEnabled && communicationsConfig.ntfy.enabled, runner: intelligenceBriefing, onError: error => console.error(error) });
   if (autoMonitorState.enabled) {
     setTimeout(() => {
       void runAutoMonitorSnapshot('startup').catch((error) => {

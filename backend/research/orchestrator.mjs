@@ -10,7 +10,7 @@ export function decompose(objective) {
     { id: 'Q3', question: 'What measurable experiment could distinguish the alternatives from the baseline?', verification: 'Define a prediction, baseline, controlled variables and falsification criterion; do not execute.' },
   ];
 }
-export function createResearchOrchestrator({ memory, retrieve, generate, now = Date.now, timeoutMs = 100000, cooldownMs = 10000 }) {
+export function createResearchOrchestrator({ memory, retrieve, generate, onCompleted, now = Date.now, timeoutMs = 100000, cooldownMs = 10000 }) {
   let busy = false, lastStarted = -Infinity;
   return {
     memory,
@@ -84,7 +84,10 @@ export function createResearchOrchestrator({ memory, retrieve, generate, now = D
         if (!record.experiments.length) record.experiments.push({ id: randomUUID(), description: 'Review full-text methods, establish a measured baseline, then design a controlled comparison with a falsification criterion.', kind: 'proposal', status: 'approval-required', approval: null, outcome: null, validation: 'not-performed' });
         record.status = record.findings.length ? 'completed-with-limitations' : 'insufficient-evidence';
         record.usage = budget; record.completedAt = new Date().toISOString();
-        return await memory.save(record);
+        const saved = await memory.save(record);
+        // Delivery failure must not turn successful research persistence into a failed task.
+        try { Promise.resolve(onCompleted?.(saved)).catch(() => {}); } catch {}
+        return saved;
       } finally { busy = false; }
     },
   };
