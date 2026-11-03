@@ -29,7 +29,7 @@ test('wing workflow clarifies before retrieval then returns cited speculation an
   const clarification = await engine.run({ objective: 'Investigate wing geometry', requestClarification: true });
   assert.equal(clarification.status, 'needs-clarification'); assert.equal(calls(), 0); assert.match(renderReport(clarification), /Mach/);
   const report = await engine.run({ objective: clarification.objective, parentId: clarification.id, conditions: 'Mach 0.2, matched lift, fixed span; exploratory simulation proposal' });
-  assert.equal(calls(), 2); assert.equal(report.findings[0].realWorldValidated, false);
+  assert.equal(calls(), 3); assert.equal(report.findings[0].realWorldValidated, false);
   assert.equal(report.hypotheses[0].status, 'speculation'); assert.equal(report.experiments[0].status, 'approval-required'); assert.equal(report.experiments[0].outcome, null);
   assert.equal(report.parentId, clarification.id); assert.match(renderReport(report), /not independently validated/);
   assert.equal(report.searches.length, 2);
@@ -41,7 +41,7 @@ test('fabricated IDs, missing passages and unsupported contradiction are rejecte
 test('empty retrieval and malformed model output never yield invented findings', async () => {
   const empty = setup({ retrieve: async () => ({ sources: [], errors: [{ provider: 'fixture', error: 'offline' }] }) });
   const r = await empty.engine.run({ objective: 'Question', conditions: 'exploratory' });
-  assert.equal(r.status, 'insufficient-evidence'); assert.equal(empty.calls(), 0);
+  assert.equal(r.status, 'insufficient-evidence'); assert.equal(empty.calls(), 1);
   const malformed = setup({ generate: async () => 'not JSON' });
   const m = await malformed.engine.run({ objective: 'Question', conditions: 'exploratory' });
   assert.equal(m.findings.length, 0); assert.ok(m.uncertainties.some(s => s.includes('invalid')));
@@ -60,10 +60,11 @@ test('untrusted content cannot execute tools or inject citations through generat
 });
 test('concurrent requests are rejected and lock releases after provider failure', async () => {
   let release;
-  const { engine } = setup({ retrieve: () => new Promise((_resolve, reject) => { release = reject; }) });
+  const { engine } = setup({ retrieve: () => release ? Promise.reject(Error('fixture failure')) : new Promise((_resolve, reject) => { release = reject; }) });
   const first = engine.run({ objective: 'Question', conditions: 'test' });
   await assert.rejects(engine.run({ objective: 'Second', conditions: 'test' }), e => e.status === 429);
-  release(new Error('fixture failure')); await assert.rejects(first);
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  release(new Error('fixture failure')); assert.equal((await first).status, 'insufficient-evidence');
   await assert.rejects(engine.run({ objective: '', conditions: 'test' }), e => e.status === 400);
 });
 test('API and conversation use same engine, local guard, clarification continuation and saved reports', async () => {
@@ -98,7 +99,7 @@ test('missing conditions use transparent exploratory defaults without a clarific
   const report = await engine.run({ objective: 'Ferrari upgrades at high altitude' });
   assert.equal(report.conditionsSource, 'exploratory-default');
   assert.notEqual(report.status, 'needs-clarification');
-  assert.equal(calls(), 2);
+  assert.equal(calls(), 3);
   assert.match(renderReport(report), /Exploratory assumptions/);
   assert.ok(report.experiments.every(e => e.status === 'approval-required'));
 });

@@ -3964,11 +3964,11 @@ function toOllamaMessages(messages, systemInstruction) {
   return converted;
 }
 
-async function generateResearchResponse({ role, system, prompt, signal, maxTokens }) {
-  const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]), maxTokens, timeoutMs: 25000, json: true };
+async function generateResearchResponse({ role, system, prompt, signal, maxTokens, strictResearchBudget = false }) {
+  const options = { signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]), maxTokens, timeoutMs: 25000, json: true, strictResearchBudget };
   const instruction = `${system}\nYour independent role for this call is ${role}.`;
   const messages = [{ role: 'user', content: prompt }];
-  // Exactly one provider attempt per stage keeps the two-call budget enforceable.
+  // Exactly one provider attempt per stage; research budgets are shared across stages.
   for (const provider of modelOrder) {
     if (provider === 'venice' && veniceConfigured) return generateVeniceResponse(messages, instruction, options);
     if (provider === 'gemini' && gemini) return generateGeminiResponse(prompt, instruction, options);
@@ -3983,6 +3983,7 @@ async function generateOllamaResponse(messages, systemInstruction, options = {})
 
   const response = await fetchWithTimeout(`${ollamaBaseUrl.replace(/\/$/, '')}/api/chat`, {
     method: 'POST',
+    ...(options.strictResearchBudget ? { redirect: 'error' } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -4011,6 +4012,19 @@ async function generateOllamaResponse(messages, systemInstruction, options = {})
 
 async function generateGeminiResponse(promptText, systemInstruction, options = {}) {
   if (!gemini) return null;
+
+  // One research-only REST attempt prevents SDK redirects or retries exceeding the shared budget.
+  if (options.strictResearchBudget) {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent', {
+      method: 'POST', redirect: 'error', signal: options.signal,
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: systemInstruction }] }, contents: [{ role: 'user', parts: [{ text: promptText }] }], generationConfig: { maxOutputTokens: options.maxTokens, responseMimeType: 'application/json' } }),
+    });
+    if (!response.ok) { await response.body?.cancel(); throw new Error('Research model request failed'); }
+    const result = await response.json();
+    if (result.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new Error('Research model output truncated');
+    return (result.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('').trim();
+  }
 
   const response = await gemini.models.generateContent({
     model: 'gemini-3-flash-preview',
@@ -4041,6 +4055,7 @@ async function generateOpenAIResponse(messages, systemInstruction, options = {})
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
+    ...(options.strictResearchBudget ? { redirect: 'error' } : {}),
       signal: options.signal || AbortSignal.timeout(options.timeoutMs || 90000),
       headers: {
         'Content-Type': 'application/json',
@@ -4088,6 +4103,7 @@ async function generateVeniceResponse(messages, systemInstruction, options = {})
   try {
     const response = await fetch(`${veniceBaseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
+    ...(options.strictResearchBudget ? { redirect: 'error' } : {}),
       ...(options.signal ? { signal: options.signal } : options.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
       headers: {
         'Content-Type': 'application/json',
