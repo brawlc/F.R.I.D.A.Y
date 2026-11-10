@@ -3555,7 +3555,7 @@ export const Terminal: React.FC = () => {
     }));
 
     try {
-      const streamer = streamFridayResponse(aiMessages);
+      const streamer = streamFridayResponse(aiMessages, researchId => setMessages(prev => prev.map(m => m.id === fridayMessageId ? { ...m, researchId, researchResponse: true } : m)));
       for await (const chunk of streamer) {
         accumulatedContent += chunk;
         setMessages(prev =>

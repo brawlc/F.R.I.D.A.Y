@@ -4,6 +4,8 @@ export interface Message {
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
+  researchId?: string;
+  researchResponse?: boolean;
 }
 
 export type CommandHandler = (cmd: string) => Promise<string | void>;

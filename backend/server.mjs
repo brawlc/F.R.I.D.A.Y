@@ -20,6 +20,8 @@ import { createResearchMemory } from './research/memory.mjs';
 import { createRetrieval } from './research/retrieval.mjs';
 import { createResearchOrchestrator } from './research/orchestrator.mjs';
 import { createResearchRouter, researchChat } from './research/router.mjs';
+import { createReportStore } from './research/report-store.mjs';
+import { createResearchReports } from './research/report-service.mjs';
 import { isTimeRequest } from '../shared/conversation-intent.mjs';
 import { createCommunicationsHub, createDeliveryStore, readConfig } from './communications/hub.mjs';
 import { startBriefingScheduler } from './communications/scheduler.mjs';
@@ -129,13 +131,14 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/reverse-engineering/v1', createReverseEngineeringRouter({ generateWebsite: generateStudioWebsite }));
 app.use('/api/security/whitehat', createWhitehatRouter());
 app.use('/api/voice', requireLocalDefense, createVoiceRouter());
+const researchReports = createResearchReports({ store: createReportStore({ directory: process.env.FRIDAY_REPORTS_DIR || resolve(__dirname, '.friday-reports'), workspace: __dirname, retentionDays: process.env.FRIDAY_REPORT_RETENTION_DAYS, maxReports: process.env.FRIDAY_REPORT_MAX_COUNT }), hub: communications });
 const researchEngine = createResearchOrchestrator({
-  onCompleted: record => communications.notify({ type: 'research_completed', id: record.id, priority: 'normal' }),
+  onCompleted: record => researchReports.completed(record),
   memory: createResearchMemory(resolve(__dirname, '.friday-research')),
   retrieve: createRetrieval(),
   generate: generateResearchResponse,
 });
-app.use('/api/research/v1', requireLocalDefense, createResearchRouter(researchEngine));
+app.use('/api/research/v1', requireLocalDefense, createResearchRouter(researchEngine, researchReports));
 app.post('/api/chat', researchChat(researchEngine, requireLocalDefense));
 app.get('/api/communications/status', requireLocalDefense, async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');

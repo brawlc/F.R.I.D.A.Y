@@ -2,12 +2,25 @@ import express from 'express';
 import { renderReport } from './report.mjs';
 import { isResearchRequest } from '../../shared/conversation-intent.mjs';
 
-export function createResearchRouter(engine) {
+export function createResearchRouter(engine, reports) {
   const router = express.Router();
   router.use((_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
   const handle = fn => async (req, res) => { try { await fn(req, res); } catch (e) { res.status(e.status || 500).json({ ok: false, error: e.status ? e.message : 'Research operation failed. Existing memory was preserved.' }); } };
   router.get('/', handle(async (_req, res) => res.json({ ok: true, research: await engine.memory.list() })));
   router.post('/', handle(async (req, res) => { const research = await engine.run(req.body); res.json({ ok: true, research, text: renderReport(research) }); }));
+  router.get('/:id/pdf-status', handle(async (req, res) => {
+    if (!reports || !/^[a-f0-9-]{36}$/i.test(req.params.id)) return res.status(400).json({ ok: false, error: 'PDF export unavailable or invalid research ID' });
+    if (!await engine.memory.get(req.params.id)) return res.status(404).json({ ok: false, error: 'Research not found' });
+    res.json({ ok: true, report: await reports.status(req.params.id) });
+  }));
+  router.get('/:id/pdf', handle(async (req, res) => {
+    if (!reports || !/^[a-f0-9-]{36}$/i.test(req.params.id)) return res.status(400).json({ ok: false, error: 'PDF export unavailable or invalid research ID' });
+    const research = await engine.memory.get(req.params.id);
+    if (!research) return res.status(404).json({ ok: false, error: 'Research not found' });
+    const bytes = await reports.export(research);
+    res.set('Content-Disposition', `attachment; filename="research-${research.id}.pdf"`);
+    res.set('X-Content-Type-Options', 'nosniff'); res.type('application/pdf').send(bytes);
+  }));
   router.get('/:id', handle(async (req, res) => {
     if (!/^[a-f0-9-]{36}$/.test(req.params.id)) return res.status(400).json({ ok: false, error: 'Invalid research ID' });
     const research = await engine.memory.get(req.params.id);
@@ -36,7 +49,7 @@ export function researchChat(engine, localGuard) {
         if (history) return res.json({ ok: true, text: (await engine.memory.list()).map(r => `${r.id} — ${r.objective} (${r.status})`).join('\n') || 'No saved research yet.', provider: 'research' });
         if (recall) {
           const r = await engine.memory.get(recall[1]);
-          return res.json({ ok: true, text: r ? renderReport(r) : 'Research report not found.', provider: 'research' });
+          return res.json({ ok: true, text: r ? renderReport(r) : 'Research report not found.', researchId: r?.id, provider: 'research' });
         }
         let input;
         if (researchRequest) {

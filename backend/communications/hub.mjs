@@ -3,6 +3,7 @@ import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isPublicBriefing } from '../briefing/public-report.mjs';
+import { reportAttachment, MAX_PDF_BYTES } from '../research/pdf.mjs';
 
 export const ROUTES = Object.freeze({
   notification_test: 'ntfy', daily_briefing: 'ntfy', f1_update: 'ntfy', spacex_update: 'ntfy', aerospace_research: 'ntfy', robotics_research: 'ntfy', ai_update: 'ntfy', software_update: 'ntfy', project_progress: 'ntfy', research_completed: 'ntfy', research_discovery: 'ntfy', task_completed: 'ntfy', reminder: 'ntfy', general_notification: 'ntfy',
@@ -101,6 +102,7 @@ export function createCommunicationsHub({ config = readConfig(), fetchImpl = fet
       'Recommended next action: Review the local security report and verify the finding. Use the existing approval workflow before any containment or recovery action.'].join('\n');
   }
   async function deliver(event, channel, key) {
+    if (event.attachment) return deliverPdf(event, channel, key);
     const deliveryLimit = isPublicBriefing(event.publicBriefing) ? 1 : attemptLimit;
     const row = { key, type: event.type, channel, severity: event.severity, at: new Date(now()).toISOString(), attempts: 0, status: 'pending' };
     const unavailable = validConfig(channel);
@@ -129,14 +131,46 @@ export function createCommunicationsHub({ config = readConfig(), fetchImpl = fet
     }
     return record({ ...row, status: 'failed', error: failure.error });
   }
+  async function deliverPdf(event, channel, key) {
+    const pdf = reportAttachment(event.attachment);
+    const row = { key, type: event.type, channel, at: new Date(now()).toISOString(), attempts: 0, status: 'pending', attachment: true };
+    if (channel !== 'ntfy' || event.type !== 'research_completed' || !pdf || pdf.bytes.length > MAX_PDF_BYTES) return record({ ...row, status: 'rejected', error: 'untrusted_attachment' });
+    const unavailable = validConfig(channel);
+    if (unavailable || storageError) return record({ ...row, status: unavailable === 'disabled' ? 'disabled' : 'failed', error: unavailable || 'delivery_store_unavailable' });
+    // Persist before network work. An uncertain upload or notification is never automatically replayed.
+    await record(row);
+    if (storageError) return { ...row, status: 'failed', error: 'delivery_store_unavailable' };
+    try {
+      const origin = new URL(config.ntfy.url).origin;
+      const auth = config.ntfy.token ? { Authorization: `Bearer ${config.ntfy.token}` } : {};
+      // A staging topic stores the PDF without notifying subscribers to the everyday topic.
+      // Then one final message supplies both the native attachment and its phone-accessible click URL.
+      const uploadTopic = `friday-files-${hash(event.id).slice(0, 24)}`;
+      row.attempts = 1;
+      const uploaded = await fetchImpl(`${origin}/${uploadTopic}`, { method: 'PUT', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { ...auth, 'Content-Type': 'application/pdf', Filename: pdf.filename, 'X-Firebase': 'no', 'X-Cache': 'no', Title: 'Research report' }, body: pdf.bytes });
+      const result = await uploaded.json().catch(() => null);
+      if (!uploaded.ok) return record({ ...row, status: 'failed', error: `attachment_provider_${uploaded.status}` });
+      const attachment = result?.attachment;
+      const url = new URL(attachment?.url);
+      if (!result?.id || result.topic !== uploadTopic || url.origin !== origin || !/^\/file\/[a-zA-Z0-9._-]+$/.test(url.pathname) || url.search || url.hash || url.username || url.password || attachment.size !== pdf.bytes.length || attachment.type !== 'application/pdf' || !Number.isFinite(attachment.expires) || attachment.expires * 1000 <= now()) throw Error('Invalid acknowledgement');
+      row.attempts = 2;
+      const delivered = await request(`${origin}/`, { topic: config.ntfy.topic, title: 'FRIDAY research PDF', message: 'Your research report is ready. Tap to open the PDF. Download before the attachment expires.', priority: 3, attach: url.href, filename: pdf.filename, click: url.href, actions: [{ action: 'view', label: 'Open PDF', url: url.href }] }, auth);
+      if (delivered.ok && delivered.json?.id && delivered.json.topic === config.ntfy.topic) return record({ ...row, status: 'sent', providerMessageId: String(delivered.json.id).slice(0, 100), attachmentExpiresAt: new Date(attachment.expires * 1000).toISOString() });
+      return record({ ...row, status: 'delivery_unknown_no_resend', error: delivered.error || 'invalid_provider_acknowledgement' });
+    } catch { return record({ ...row, status: 'delivery_unknown_no_resend', error: 'attachment_upload_or_acknowledgement_failed' }); }
+  }
   return {
     async notify(input) {
       await ready;
       if (!Object.hasOwn(ROUTES, input?.type)) return { status: 'rejected', error: 'unknown_event_type', attempts: 0 };
       const channel = ROUTES[input.type];
       const event = { ...input, severity: ['low', 'medium', 'high', 'critical'].includes(input.severity) ? input.severity : input.type === 'critical_security_incident' ? 'critical' : 'medium', detectedAt: Number.isFinite(Date.parse(input.detectedAt)) ? new Date(input.detectedAt).toISOString() : null };
-      const key = hash(JSON.stringify([channel, input.type, input.id || '', event.severity, input.behaviorCode || '', input.containment || null]));
+      const key = hash(JSON.stringify([channel, input.type, input.id || '', event.severity, input.behaviorCode || '', input.containment || null, ...(input.attachment ? ['research-pdf'] : [])]));
       if (pending.has(key)) return pending.get(key);
+      if (input.attachment) {
+        const previous = [...records].reverse().find(r => r.key === key);
+        if (previous && ['pending', 'sent', 'delivery_unknown_no_resend'].includes(previous.status)) return { key, channel, status: previous.status === 'sent' ? 'deduplicated' : 'delivery_unknown_no_resend', attempts: 0 };
+      }
       if (records.some(r => r.key === key && r.status === 'sent' && now() - Date.parse(r.at) < 86400000)) return { key, channel, status: 'deduplicated', attempts: 0 };
       const task = deliver(event, channel, key).finally(() => pending.delete(key)); pending.set(key, task); return task;
     },

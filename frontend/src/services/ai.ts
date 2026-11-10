@@ -76,7 +76,7 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
   return '';
 }
 
-export async function* streamFridayResponse(messages: { role: 'user' | 'assistant' | 'system', content: string }[]) {
+export async function* streamFridayResponse(messages: { role: 'user' | 'assistant' | 'system', content: string }[], onResearch?: (id?: string) => void) {
   const controller = new AbortController();
   const lastUser = [...messages].reverse().find(message => message.role === 'user')?.content || '';
   const lastAssistant = [...messages].reverse().find(message => message.role === 'assistant')?.content || '';
@@ -94,7 +94,7 @@ export async function* streamFridayResponse(messages: { role: 'user' | 'assistan
       }),
     });
 
-    const result = await response.json().catch(() => null) as { ok?: boolean; text?: string; error?: string } | null;
+    const result = await response.json().catch(() => null) as { ok?: boolean; text?: string; error?: string; provider?: string; researchId?: string } | null;
 
     if (!response.ok || !result?.ok) {
       const error = cleanProviderError(result?.error || response.statusText || 'FRIDAY server request failed.', 'AI provider');
@@ -102,6 +102,7 @@ export async function* streamFridayResponse(messages: { role: 'user' | 'assistan
       return;
     }
 
+    if (result.provider === 'research') onResearch?.(typeof result.researchId === 'string' && /^[a-f0-9-]{36}$/i.test(result.researchId) ? result.researchId : undefined);
     yield result.text?.trim() || 'The AI provider returned an empty response.';
   } catch (error) {
     console.error("FRIDAY local mind error:", error);

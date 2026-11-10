@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Message } from '../types';
+import { ResearchReports } from './ResearchReports';
 
 interface TerminalMessageProps {
   message: Message;
@@ -45,6 +46,7 @@ export const TerminalMessage: React.FC<TerminalMessageProps> = ({ message }) => 
           {message.isStreaming && <span className="terminal-cursor" />}
         </div>
       </div>
+      {message.researchResponse && <ResearchReports researchId={message.researchId} />}
       <div className="text-[10px] text-terminal-border mt-1 opacity-50 uppercase">
         {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </div>

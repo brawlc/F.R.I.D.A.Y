@@ -9,6 +9,9 @@ coverage/
 friday-memory.json
 .friday-research/
 .friday-communications/
+.friday-reports/
+/tmp/pdfs/
+/output/pdf/
 generated-crms/
 .friday-re/
 .friday-re-test-*/
