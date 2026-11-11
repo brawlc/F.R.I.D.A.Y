@@ -1,0 +1,23 @@
+{
+  "compatibility_date": "2026-11-10",
+  "main": "cloudflare/worker.mjs",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "FRONTEND_ENABLED": "false",
+    "SCHEDULER_ENABLED": "false",
+    "ENROLLMENT_ENABLED": "false",
+    "EXECUTOR_API_ENABLED": "false",
+    "DEVICE_POLICY_VERIFIED": "false",
+    "SCHEDULE_CUTOVER_VERIFIED": "false",
+    "FRIDAY_NTFY_ENABLED": "false"
+  },
+  // Only the private mobile build. Every request must pass through the Worker.
+  // No routes, accounts, databases, schedules or paid bindings are provisioned.
+  "assets": {
+    "directory": "./mobile-dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "none"
+  }
+}

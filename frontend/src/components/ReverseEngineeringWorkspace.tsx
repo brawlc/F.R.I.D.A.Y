@@ -1,3 +1,4 @@
+import { apiFetch, apiUrl } from '../services/apiClient';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileSearch, LoaderCircle, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { WebsiteScanView, type ScanEvent } from './WebsiteScanView';
@@ -133,7 +134,7 @@ function evidencePreview(evidence: unknown) {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<ApiResponse<T>> {
-  const response = await fetch(`${API_ROOT}${path}`, {
+  const response = await apiFetch(`${API_ROOT}${path}`, {
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
   });
@@ -309,7 +310,7 @@ export function ReverseEngineeringWorkspace() {
       } else if (deepScan) {
         setScanEvents(previous => [...previous, { stage: 'browser', message: 'Deep scan requires the updated FRIDAY desktop app. This session will use HTML analysis.' }]);
       }
-      const response = await fetch(`${API_ROOT}/websites/analyze/stream`, {
+      const response = await apiFetch(`${API_ROOT}/websites/analyze/stream`, {
         method: 'POST',
         signal: AbortSignal.timeout(120000),
         headers: { 'Content-Type': 'application/json' },
@@ -395,7 +396,7 @@ export function ReverseEngineeringWorkspace() {
           setStatus(`Opened in ${opened.browser}. Source ZIP saved: ${opened.downloadPath}`);
         } else {
           window.open(result.project.previewUrl, '_blank', 'noopener,noreferrer');
-          const download = document.createElement('a'); download.href = `${API_ROOT}/website-studio/projects/${result.project.id}/export`; download.download = ''; download.click();
+          const download = document.createElement('a'); download.href = apiUrl(`${API_ROOT}/website-studio/projects/${result.project.id}/export`); download.download = ''; download.click();
           setStatus('Project created. Use the editor below to open the preview if your browser blocked the new tab.');
         }
       } catch (openError) { setStatus(`Project created successfully. ${openError instanceof Error ? openError.message : 'Use the editor buttons below to open and download it.'}`); }
@@ -542,8 +543,8 @@ export function ReverseEngineeringWorkspace() {
               {job.error?.message && <p className="mt-2 text-rose-100">{job.error.message}</p>}
               {job.status === 'completed' && (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <a href={`${API_ROOT}/jobs/${job.jobId}/report?format=markdown`} className="rounded border border-cyan-300/25 px-3 py-2 text-cyan-100 hover:bg-cyan-300/10">Download Markdown</a>
-                  <a href={`${API_ROOT}/jobs/${job.jobId}/report?format=json`} className="rounded border border-cyan-300/25 px-3 py-2 text-cyan-100 hover:bg-cyan-300/10">Download JSON</a>
+                  <a href={apiUrl(`${API_ROOT}/jobs/${job.jobId}/report?format=markdown`)} className="rounded border border-cyan-300/25 px-3 py-2 text-cyan-100 hover:bg-cyan-300/10">Download Markdown</a>
+                  <a href={apiUrl(`${API_ROOT}/jobs/${job.jobId}/report?format=json`)} className="rounded border border-cyan-300/25 px-3 py-2 text-cyan-100 hover:bg-cyan-300/10">Download JSON</a>
                 </div>
               )}
             </div>

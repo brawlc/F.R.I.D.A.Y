@@ -6,9 +6,10 @@ import { isPublicBriefing } from '../briefing/public-report.mjs';
 import { reportAttachment, MAX_PDF_BYTES } from '../research/pdf.mjs';
 
 export const ROUTES = Object.freeze({
-  notification_test: 'ntfy', daily_briefing: 'ntfy', f1_update: 'ntfy', spacex_update: 'ntfy', aerospace_research: 'ntfy', robotics_research: 'ntfy', ai_update: 'ntfy', software_update: 'ntfy', project_progress: 'ntfy', research_completed: 'ntfy', research_discovery: 'ntfy', task_completed: 'ntfy', reminder: 'ntfy', general_notification: 'ntfy',
-  suspicious_activity: 'telegram', malware_detection: 'telegram', ransomware_detection: 'telegram', unauthorized_login: 'telegram', unusual_network_activity: 'telegram', critical_security_incident: 'telegram', security_recovery_report: 'telegram', sentinel_report: 'telegram',
+  notification_test: 'ntfy', daily_briefing: 'ntfy', f1_update: 'ntfy', spacex_update: 'ntfy', aerospace_research: 'ntfy', robotics_research: 'ntfy', ai_update: 'ntfy', software_update: 'ntfy', project_progress: 'ntfy', research_completed: 'ntfy', research_discovery: 'ntfy', task_completed: 'ntfy', reminder: 'ntfy', general_notification: 'ntfy', worker_disconnected: 'ntfy', automation_failure: 'ntfy', pending_approval: 'ntfy', service_recovery: 'ntfy',
+  suspicious_activity: 'ntfy', malware_detection: 'ntfy', ransomware_detection: 'ntfy', unauthorized_login: 'ntfy', unusual_network_activity: 'ntfy', critical_security_incident: 'ntfy', security_recovery_report: 'ntfy', sentinel_report: 'ntfy',
 });
+export const SECURITY_TYPES = new Set(['suspicious_activity','malware_detection','ransomware_detection','unauthorized_login','unusual_network_activity','critical_security_incident','security_recovery_report','sentinel_report']);
 const labels = Object.fromEntries(Object.keys(ROUTES).map(k => [k, k.replaceAll('_', ' ')]));
 const behaviors = {
   posture_check: 'A read-only security posture check requires review. This is not proof of malware.',
@@ -21,7 +22,7 @@ const behaviors = {
 };
 export function readConfig(env = process.env) {
   return {
-    ntfy: { enabled: env.FRIDAY_NTFY_ENABLED === 'true', url: env.FRIDAY_NTFY_SERVER || env.FRIDAY_NTFY_URL || 'https://ntfy.sh', topic: env.FRIDAY_NTFY_TOPIC || '', token: env.FRIDAY_NTFY_TOKEN || '' },
+    ntfy: { enabled: env.FRIDAY_NTFY_ENABLED === 'true', url: env.FRIDAY_NTFY_SERVER || env.FRIDAY_NTFY_URL || 'https://ntfy.sh', topic: env.FRIDAY_NTFY_TOPIC || '', token: env.FRIDAY_NTFY_TOKEN || '', securityTopic: env.FRIDAY_NTFY_SECURITY_TOPIC || '', accessControlled: env.FRIDAY_NTFY_ACL_VERIFIED === 'true' },
     telegram: { enabled: env.FRIDAY_TELEGRAM_ENABLED === 'true', token: env.FRIDAY_TELEGRAM_BOT_TOKEN || '', chatId: env.FRIDAY_TELEGRAM_CHAT_ID || '' },
     dailyEnabled: env.FRIDAY_DAILY_BRIEFING_ENABLED === 'true', device: env.FRIDAY_NOTIFICATION_DEVICE || 'FRIDAY device',
   };
@@ -64,6 +65,7 @@ export function createCommunicationsHub({ config = readConfig(), fetchImpl = fet
     if (!c.enabled) return 'disabled';
     if (channel === 'telegram') return /^\d+:[\w-]+$/.test(c.token) && /^[1-9]\d*$/.test(c.chatId) ? null : 'missing_or_invalid_credentials';
     try { const u = new URL(c.url); if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash || u.pathname !== '/') return 'invalid_configuration'; } catch { return 'invalid_configuration'; }
+    if (!c.token || c.accessControlled !== true) return 'authenticated_topic_acl_required';
     return /^[\w-]{1,100}$/.test(c.topic) ? null : 'missing_or_invalid_credentials';
   }
   async function request(url, body, headers = {}) {
@@ -76,10 +78,11 @@ export function createCommunicationsHub({ config = readConfig(), fetchImpl = fet
         return { ok: false, error: `provider_${status}`, retry: status === 429 || status >= 500, retryAfter };
       }
       return { ok: true, json };
-    } catch { return { ok: false, error: 'network_or_timeout', retry: true, retryAfter: 0 }; }
+    } catch { return { ok: false, error: 'network_or_timeout', retry: false, retryAfter: 0 }; }
   }
   function message(event, channel) {
     if (channel === 'ntfy') {
+      if (SECURITY_TYPES.has(event.type)) return `FRIDAY security alert (${event.severity}). Open the private command center to review. Containment is not confirmed by this notification.`;
       if (event.type === 'notification_test') return 'PROJECT FRIDAY notification test. This is a harmless test of your general notifications. No action is needed.';
       if (event.type === 'daily_briefing') {
         if (isPublicBriefing(event.publicBriefing)) return event.publicBriefing.text;
@@ -105,8 +108,11 @@ export function createCommunicationsHub({ config = readConfig(), fetchImpl = fet
     if (event.attachment) return deliverPdf(event, channel, key);
     const deliveryLimit = isPublicBriefing(event.publicBriefing) ? 1 : attemptLimit;
     const row = { key, type: event.type, channel, severity: event.severity, at: new Date(now()).toISOString(), attempts: 0, status: 'pending' };
-    const unavailable = validConfig(channel);
+    const unavailable = validConfig(channel) || (SECURITY_TYPES.has(event.type) && (!/^[\w-]{1,100}$/.test(config.ntfy.securityTopic || '') || config.ntfy.securityTopic === config.ntfy.topic) ? 'separate_security_topic_required' : null);
     if (unavailable || storageError) return record({ ...row, status: unavailable === 'disabled' ? 'disabled' : 'failed', error: unavailable || 'delivery_store_unavailable' });
+    const topic = SECURITY_TYPES.has(event.type) ? config.ntfy.securityTopic : config.ntfy.topic;
+    await record({ ...row });
+    if (storageError) return { ...row, status: 'failed', error: 'delivery_store_unavailable' };
     const text = message(event, channel);
     let failure;
     for (let attempt = 1; attempt <= deliveryLimit; attempt++) {
@@ -122,14 +128,14 @@ export function createCommunicationsHub({ config = readConfig(), fetchImpl = fet
           failure = response.ok ? { error: 'invalid_provider_acknowledgement', retry: false } : response;
         }
       } else {
-        const response = await request(`${config.ntfy.url.replace(/\/$/, '')}/`, { topic: config.ntfy.topic, title: 'FRIDAY', message: text, priority: event.priority === 'low' ? 2 : 3 }, config.ntfy.token ? { Authorization: `Bearer ${config.ntfy.token}` } : {});
-        if (response.ok && response.json?.id && response.json?.topic === config.ntfy.topic) return record({ ...row, status: 'sent', providerMessageId: String(response.json.id).slice(0, 100) });
+        const response = await request(`${config.ntfy.url.replace(/\/$/, '')}/`, { topic, title: 'FRIDAY', message: text, priority: SECURITY_TYPES.has(event.type) ? (event.severity === 'critical' ? 5 : event.severity === 'high' ? 4 : 3) : event.priority === 'low' ? 2 : 3 }, config.ntfy.token ? { Authorization: `Bearer ${config.ntfy.token}` } : {});
+        if (response.ok && response.json?.id && response.json?.topic === topic) return record({ ...row, status: 'sent', providerMessageId: String(response.json.id).slice(0, 100) });
         failure = response.ok ? { error: 'invalid_provider_acknowledgement', retry: false } : response;
       }
       if (!failure.retry || attempt === deliveryLimit || !Number.isFinite(failure.retryAfter) || failure.retryAfter > 5) break;
       await sleep(Math.max(attempt * 250, (failure.retryAfter || 0) * 1000));
     }
-    return record({ ...row, status: 'failed', error: failure.error });
+    return record({ ...row, status: ['network_or_timeout','invalid_provider_acknowledgement'].includes(failure.error) ? 'delivery_unknown_no_resend' : 'failed', error: failure.error });
   }
   async function deliverPdf(event, channel, key) {
     const pdf = reportAttachment(event.attachment);
@@ -167,13 +173,13 @@ export function createCommunicationsHub({ config = readConfig(), fetchImpl = fet
       const event = { ...input, severity: ['low', 'medium', 'high', 'critical'].includes(input.severity) ? input.severity : input.type === 'critical_security_incident' ? 'critical' : 'medium', detectedAt: Number.isFinite(Date.parse(input.detectedAt)) ? new Date(input.detectedAt).toISOString() : null };
       const key = hash(JSON.stringify([channel, input.type, input.id || '', event.severity, input.behaviorCode || '', input.containment || null, ...(input.attachment ? ['research-pdf'] : [])]));
       if (pending.has(key)) return pending.get(key);
-      if (input.attachment) {
+      {
         const previous = [...records].reverse().find(r => r.key === key);
         if (previous && ['pending', 'sent', 'delivery_unknown_no_resend'].includes(previous.status)) return { key, channel, status: previous.status === 'sent' ? 'deduplicated' : 'delivery_unknown_no_resend', attempts: 0 };
       }
       if (records.some(r => r.key === key && r.status === 'sent' && now() - Date.parse(r.at) < 86400000)) return { key, channel, status: 'deduplicated', attempts: 0 };
       const task = deliver(event, channel, key).finally(() => pending.delete(key)); pending.set(key, task); return task;
     },
-    async status() { await ready; return { channels: { ntfy: { enabled: config.ntfy.enabled, problem: validConfig('ntfy') }, telegram: { enabled: config.telegram.enabled, problem: validConfig('telegram'), outboundOnly: true } }, storageError, deliveries: records.slice(-100) }; },
+    async status() { await ready; return { channels: { ntfy: { enabled: config.ntfy.enabled, problem: validConfig('ntfy') }, telegram: { enabled: false, problem: 'friday_delivery_disabled', outboundOnly: true } }, storageError, deliveries: records.slice(-100) }; },
   };
 }

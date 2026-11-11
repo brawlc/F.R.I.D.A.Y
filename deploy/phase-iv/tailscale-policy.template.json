@@ -1,0 +1,13 @@
+{
+  "tagOwners": { "tag:friday-core": ["autogroup:admin"], "tag:friday-worker": ["autogroup:admin"] },
+  "hosts": { "owner-iphone": "<APPROVED_IPHONE_TAILSCALE_IPV4>", "other-device-test": "<UNAUTHORIZED_TEST_DEVICE_TAILSCALE_IPV4>" },
+  "grants": [
+    { "src": ["owner-iphone"], "dst": ["tag:friday-core"], "ip": ["tcp:443"], "app": { "friday.local/role": [{ "roles": ["owner"] }] } },
+    { "src": ["tag:friday-worker"], "dst": ["tag:friday-core"], "ip": ["tcp:443"], "app": { "friday.local/role": [{ "roles": ["worker"] }] } }
+  ],
+  "tests": [
+    { "src": "owner-iphone", "accept": ["tag:friday-core:443"], "deny": ["tag:friday-core:3210", "tag:friday-core:22"] },
+    { "src": "other-device-test", "deny": ["tag:friday-core:443", "tag:friday-core:3210", "tag:friday-core:22"] },
+    { "src": "tag:friday-worker", "accept": ["tag:friday-core:443"], "deny": ["tag:friday-core:3210", "tag:friday-core:22"] }
+  ]
+}

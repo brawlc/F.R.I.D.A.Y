@@ -19,3 +19,8 @@ generated-crms/
 .friday-website-studio-test-*/
 # Local screenshots, scan results, logs and disposable browser test profiles.
 /work/
+
+.friday-cloud/
+.friday-worker/
+mobile-dist/
+cloud-package/

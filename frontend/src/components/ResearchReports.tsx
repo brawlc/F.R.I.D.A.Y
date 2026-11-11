@@ -1,3 +1,4 @@
+import { apiFetch } from '../services/apiClient';
 import React, { useState } from 'react';
 type Entry = { id: string; objective: string; status: string };
 export function ResearchReports({ researchId }: { researchId?: string }) {
@@ -9,7 +10,7 @@ export function ResearchReports({ researchId }: { researchId?: string }) {
     if (!valid(id) || busy) return;
     setBusy(true); setMessage('Preparing private PDF…');
     try {
-      const response = await fetch(`/api/research/v1/${id}/pdf`);
+      const response = await apiFetch(`/api/research/v1/${id}/pdf`);
       if (!response.ok || !response.headers.get('content-type')?.includes('application/pdf')) throw Error();
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a'); a.href = url; a.download = `research-${id}.pdf`; a.click();
@@ -20,7 +21,7 @@ export function ResearchReports({ researchId }: { researchId?: string }) {
   }
   async function loadHistory() {
     setMessage('');
-    try { const response = await fetch('/api/research/v1'); const data = await response.json(); if (!response.ok || !data.ok || !Array.isArray(data.research)) throw Error(); setHistory(data.research.filter((r: Entry) => typeof r.id === 'string' && valid(r.id))); }
+    try { const response = await apiFetch('/api/research/v1'); const data = await response.json(); if (!response.ok || !data.ok || !Array.isArray(data.research)) throw Error(); setHistory(data.research.filter((r: Entry) => typeof r.id === 'string' && valid(r.id))); }
     catch { setMessage('Research history is unavailable.'); }
   }
   return <div className="mt-3 border border-cyan-900 p-3 text-xs text-cyan-100">

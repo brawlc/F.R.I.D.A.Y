@@ -1,3 +1,4 @@
+import { apiFetch } from '../services/apiClient';
 import { useRef, useState } from 'react';
 
 type Report = {
@@ -19,7 +20,7 @@ export function WhitehatWorkbench() {
   const assess = async () => {
     setBusy(true); setError(''); setReport(null); setComparison('');
     try {
-      const response = await fetch('/api/security/whitehat/assess', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(150000), body: JSON.stringify({ url, additionalUrls: additionalUrls.split('\n').map(value => value.trim()).filter(Boolean), authorization: { confirmed: authorized, scope, purpose: 'Bounded public-page white-hat assessment' } }) });
+      const response = await apiFetch('/api/security/whitehat/assess', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(150000), body: JSON.stringify({ url, additionalUrls: additionalUrls.split('\n').map(value => value.trim()).filter(Boolean), authorization: { confirmed: authorized, scope, purpose: 'Bounded public-page white-hat assessment' } }) });
       const body = await response.json();
       if (!response.ok || !body.ok) throw new Error(body.error || 'Assessment failed.');
       const next: Report = body.report;

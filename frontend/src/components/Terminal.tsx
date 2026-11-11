@@ -1,3 +1,4 @@
+import { apiFetch, apiUrl } from '../services/apiClient';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { safeStorage } from '../services/storage';
 import { looksLikeCrmSpecification, selectConversationRoute } from '../services/commandRouting';
@@ -868,7 +869,7 @@ export const Terminal: React.FC = () => {
     setIsMarketLoading(true);
     setMarketStatus('Refreshing market feed');
     try {
-      const response = await fetch('/api/markets', { cache: 'no-store' });
+      const response = await apiFetch('/api/markets', { cache: 'no-store' });
       const result = await response.json().catch(() => null) as MarketSnapshot | null;
       if (result?.stocks || result?.crypto) {
         setMarketSnapshot({
@@ -1023,7 +1024,7 @@ export const Terminal: React.FC = () => {
 
     const loadNativeVoices = async () => {
       try {
-        const response = await fetch('/api/desktop/voices');
+        const response = await apiFetch('/api/desktop/voices');
         const result = await response.json().catch(() => null) as { ok?: boolean; voices?: NativeVoice[] } | null;
         if (!cancelled && result?.ok && Array.isArray(result.voices)) {
           setNativeVoices(result.voices);
@@ -1315,7 +1316,7 @@ export const Terminal: React.FC = () => {
       const estimatedSpeechMs = Math.min(12000, Math.max(1500, cleanText.length * 55));
       speechSuppressionUntilRef.current = performance.now() + estimatedSpeechMs + 900;
 
-      void fetch('/api/desktop/speak', {
+      void apiFetch('/api/desktop/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1383,7 +1384,7 @@ export const Terminal: React.FC = () => {
   const runNetworkDoctor = useCallback(async () => {
     setNetworkDoctorStatus('Checking adapter, gateway, internet, and DNS');
     try {
-      const response = await fetch('/api/network/doctor', { cache: 'no-store' });
+      const response = await apiFetch('/api/network/doctor', { cache: 'no-store' });
       const result = await response.json().catch(() => null) as NetworkDoctorReport | null;
       if (response.ok && result?.ok) {
         setNetworkDoctorReport(result);
@@ -1582,7 +1583,7 @@ export const Terminal: React.FC = () => {
     setLiveVisionStatus('Scanning object...');
 
     try {
-      const response = await fetch('/api/vision/inspect-object', {
+      const response = await apiFetch('/api/vision/inspect-object', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64, mimeType: 'image/jpeg' }),
@@ -1640,7 +1641,7 @@ export const Terminal: React.FC = () => {
     setIsVisionLookingUp(true);
     setLiveVisionStatus('Comparing markings and angles with live web results...');
     try {
-      const response = await fetch('/api/vision/search-object', {
+      const response = await apiFetch('/api/vision/search-object', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1772,7 +1773,7 @@ export const Terminal: React.FC = () => {
     setIsHardwareScanning(true);
     setHardwareStatus('Scanning local devices');
     try {
-      const response = await fetch('/api/hardware/devices', { cache: 'no-store' });
+      const response = await apiFetch('/api/hardware/devices', { cache: 'no-store' });
       const result = await response.json().catch(() => null) as { ok?: boolean; devices?: HardwareDevice[]; message?: string } | null;
       if (result?.ok && Array.isArray(result.devices)) {
         setHardwareDevices(result.devices);
@@ -1852,7 +1853,7 @@ export const Terminal: React.FC = () => {
     setSecurityAuditStatus(securityAuditAuthMode === 'none' ? 'Running passive defensive audit' : 'Running authorized authenticated audit');
     setSecurityAuditResult(null);
     try {
-      const response = await fetch('/api/security/web-audit', {
+      const response = await apiFetch('/api/security/web-audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1884,7 +1885,7 @@ export const Terminal: React.FC = () => {
     setProjectAuditStatus('Scanning project files for bug and security patterns');
     setProjectAuditResult(null);
     try {
-      const response = await fetch('/api/security/project-audit');
+      const response = await apiFetch('/api/security/project-audit');
       const result = await response.json().catch(() => null) as ProjectSecurityAuditResult | null;
       if (response.ok && result?.ok) {
         setProjectAuditResult(result);
@@ -1902,7 +1903,7 @@ export const Terminal: React.FC = () => {
 
   const downloadProjectAuditPdf = useCallback(() => {
     const link = document.createElement('a');
-    link.href = '/api/security/project-audit.pdf';
+    link.href = apiUrl('/api/security/project-audit.pdf');
     link.download = '';
     document.body.appendChild(link);
     link.click();
@@ -1915,7 +1916,7 @@ export const Terminal: React.FC = () => {
     setSystemProtectionStatus('Checking Windows protections, encryption, startup, and exposure. Some checks may require additional permissions.');
     setSystemProtectionResult(null);
     try {
-      const response = await fetch('/api/security/system-protection', { cache: 'no-store', signal: AbortSignal.timeout(75000) });
+      const response = await apiFetch('/api/security/system-protection', { cache: 'no-store', signal: AbortSignal.timeout(75000) });
       const result = await response.json().catch(() => null) as SystemProtectionResult | null;
       if (response.ok && result?.ok) {
         setSystemProtectionResult(result);
@@ -2111,7 +2112,7 @@ export const Terminal: React.FC = () => {
       speechSuppressionUntilRef.current = performance.now() + estimatedSpeechMs + 900;
 
       try {
-        const response = await fetch('/api/desktop/speak', {
+        const response = await apiFetch('/api/desktop/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2743,7 +2744,7 @@ export const Terminal: React.FC = () => {
   }, []);
 
   const postDesktopOpen = async (endpoint: string, command: string) => {
-    const response = await fetch(`${endpoint}/api/desktop/open`, {
+    const response = await apiFetch(`${endpoint}/api/desktop/open`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target: command }),
@@ -2752,7 +2753,7 @@ export const Terminal: React.FC = () => {
   };
 
   const postDesktopClose = async (endpoint: string, command: string) => {
-    const response = await fetch(`${endpoint}/api/desktop/close`, {
+    const response = await apiFetch(`${endpoint}/api/desktop/close`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target: command }),
@@ -2761,7 +2762,7 @@ export const Terminal: React.FC = () => {
   };
 
   const postDesktopAction = async (endpoint: string, command: string) => {
-    const response = await fetch(`${endpoint}/api/desktop/action`, {
+    const response = await apiFetch(`${endpoint}/api/desktop/action`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target: command }),
@@ -2770,7 +2771,7 @@ export const Terminal: React.FC = () => {
   };
 
   const runDesktopTaskCommand = useCallback(async (task: string, confirmed = false) => {
-    const request = async (endpoint: string) => fetch(`${endpoint}/api/desktop/task`, {
+    const request = async (endpoint: string) => apiFetch(`${endpoint}/api/desktop/task`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ task, confirmed }),

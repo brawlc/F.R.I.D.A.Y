@@ -71,11 +71,11 @@ test('preview never sends or consumes novelty and model output must cite a retri
 });
 test('actual hub delivers public intelligence only to ntfy and never retries ambiguous sends', async () => {
   let calls = 0;
-  const hub = createCommunicationsHub({ config: { ntfy: { enabled: true, url: 'https://ntfy.sh', topic: 'fixture' }, telegram: { enabled: true, token: '1:test', chatId: '2' }, device: 'test' }, fetchImpl: async (url, opts) => {
+  const hub = createCommunicationsHub({ config: { ntfy: { enabled: true, token: 'fixture-token', accessControlled: true, url: 'https://ntfy.sh', topic: 'fixture' }, telegram: { enabled: true, token: '1:test', chatId: '2' }, device: 'test' }, fetchImpl: async (url, opts) => {
     calls++; assert.equal(url, 'https://ntfy.sh/'); assert.match(JSON.parse(opts.body).message, /FRIDAY intelligence/); throw Error('ambiguous timeout');
   } });
   const result = await hub.notify({ type: 'daily_briefing', publicBriefing: makePublicBriefing({ day: '2026-10-31', items: [item], health: [] }) });
-  assert.equal(result.status, 'failed'); assert.equal(calls, 1);
+  assert.equal(result.status, 'delivery_unknown_no_resend'); assert.equal(calls, 1);
 });
 
 test('all unavailable sources produce an honest no-news briefing, not model inventions', async () => {

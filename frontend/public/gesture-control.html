@@ -193,6 +193,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script>
+      // Standalone Windows-only page; never contact visitor-local services from a cloud page.
+      function localApi(path, options) {
+        if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return Promise.reject(new Error('Desktop control is local-only'));
+        return fetch(path, { ...options, redirect: 'error', credentials: 'same-origin', cache: 'no-store' });
+      }
+
       const video = document.getElementById('video');
       const canvas = document.getElementById('canvas');
       const context = canvas.getContext('2d');
@@ -261,7 +267,7 @@
         lastSentAt = now;
 
         try {
-          const response = await fetch('/api/desktop/cursor', {
+          const response = await localApi('/api/desktop/cursor', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ x, y, action }),
@@ -279,7 +285,7 @@
 
       async function checkDesktopBridge() {
         try {
-          const response = await fetch('/api/desktop/status');
+          const response = await localApi('/api/desktop/status');
           const result = await response.json();
           cursorStatus.textContent = result.desktopBridge
             ? 'Cursor bridge ready'

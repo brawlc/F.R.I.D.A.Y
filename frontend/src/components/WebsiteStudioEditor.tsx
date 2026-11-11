@@ -1,10 +1,11 @@
+import { apiFetch, apiUrl } from '../services/apiClient';
 import { useEffect, useState } from 'react';
 
 const ROOT = '/api/reverse-engineering/v1/website-studio/projects';
 type FileData = { content: string; hash: string };
 type Project = { id: string; projectName: string; projectPath: string; files: Record<string, FileData>; previewUrl: string; generation: string; warning?: string; history: { id: string; label: string; createdAt: string; revision: number }[] };
 async function api(path: string, options?: RequestInit) {
-  const response = await fetch(ROOT + path, { ...options, headers: { 'Content-Type': 'application/json' } });
+  const response = await apiFetch(ROOT + path, { ...options, headers: { 'Content-Type': 'application/json' } });
   const result = await response.json();
   if (!response.ok || !result.ok) throw new Error(result.error || 'Website Studio request failed.');
   return result;
@@ -95,7 +96,7 @@ export function WebsiteStudioEditor({ createdId }: { createdId?: string }) {
       <p className="mt-3 break-all text-cyan-100/60">{project.projectPath} · {project.generation}</p>
       {project.warning && <p className="mt-2 text-amber-100">{project.warning}</p>}
       <div className="mt-3 rounded border border-emerald-300/25 bg-emerald-300/5 p-3"><strong className="text-emerald-100">Your website is ready to review</strong><p className="mt-1 text-cyan-100/70">Review it in Opera GX or the preview below. When you want further changes, open the finished project in VS Code with its Codex handoff brief.</p><button type="button" disabled={busy || Boolean(dirty)} onClick={() => void openInCode()} className="mt-3 rounded border border-emerald-300/35 px-3 py-2 text-emerald-100 disabled:opacity-40">Open in VS Code / Codex</button>{dirty && <p className="mt-2 text-amber-100">Save your edits first so VS Code opens the latest version.</p>}</div>
-      <div className="my-3 flex flex-wrap gap-2"><button onClick={() => void open()} className="rounded border border-cyan-300/30 px-3 py-2">Open in Opera GX</button><a href={`${ROOT}/${project.id}/export`} className="rounded border border-cyan-300/30 px-3 py-2">Download source ZIP</a></div>
+      <div className="my-3 flex flex-wrap gap-2"><button onClick={() => void open()} className="rounded border border-cyan-300/30 px-3 py-2">Open in Opera GX</button><a href={apiUrl(`${ROOT}/${project.id}/export`)} className="rounded border border-cyan-300/30 px-3 py-2">Download source ZIP</a></div>
       <div className="my-4 grid gap-3 rounded border border-purple-300/30 p-3">
         <h4 className="text-purple-100">Describe a website change</h4>
         <textarea aria-label="Website change request" maxLength={4000} disabled={busy} value={instruction} onChange={event => setInstruction(event.target.value)} placeholder="Make it a premium coffee shop, add subtle animations, and improve the mobile menu." className="min-h-24 rounded bg-black/60 p-3" />

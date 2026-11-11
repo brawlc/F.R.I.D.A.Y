@@ -24,7 +24,12 @@
     "test:defense": "node --test backend/test/defense.test.mjs",
     "test:whitehat": "node --test backend/test/whitehat.test.mjs",
     "test:server-smoke": "node backend/test/server-smoke.mjs",
-    "test:code-handoff": "node backend/test/test-code-handoff.cjs"
+    "test:code-handoff": "node backend/test/test-code-handoff.cjs",
+    "start:cloud": "node backend/distributed/server.mjs",
+    "start:worker": "node backend/distributed/worker.mjs",
+    "test:distributed": "node --test backend/distributed/test/*.test.mjs",
+    "build:mobile": "vite build --config vite.mobile.config.ts",
+    "test:cloud-smoke": "node backend/distributed/smoke.mjs"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -36,6 +41,8 @@
     "@fontsource/noto-sans": "^5.3.0",
     "@google/genai": "^1.29.0",
     "@huggingface/transformers": "^4.3.2",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.1.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",

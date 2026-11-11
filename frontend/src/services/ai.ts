@@ -1,3 +1,4 @@
+import { apiFetch } from './apiClient';
 import { FRIDAY_SYSTEM_PROMPT } from "../constants";
 import { isResearchConversation } from './commandRouting';
 
@@ -34,7 +35,7 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
 
   try {
     if (mimeType === 'audio/wav') {
-      const wavResponse = await fetch('/api/transcribe-wav', {
+      const wavResponse = await apiFetch('/api/transcribe-wav', {
         method: 'POST',
         signal: AbortSignal.timeout(120000),
         headers: { 'Content-Type': 'application/json' },
@@ -52,7 +53,7 @@ export async function transcribeAudioCommand(audioBase64: string, mimeType: stri
       return '';
     }
 
-    const localResponse = await fetch('/api/transcribe', {
+    const localResponse = await apiFetch('/api/transcribe', {
       method: 'POST',
       signal: AbortSignal.timeout(120000),
       headers: { 'Content-Type': 'application/json' },
@@ -84,7 +85,7 @@ export async function* streamFridayResponse(messages: { role: 'user' | 'assistan
   const timeout = window.setTimeout(() => controller.abort(), isResearch ? 115000 : 45000);
 
   try {
-    const response = await fetch('/api/chat', {
+    const response = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
@@ -122,7 +123,7 @@ export async function runDiagnosticsCommand(command: string): Promise<string> {
   const wantsConnections = /\b(show active connections|active connections)\b/.test(normalized);
 
   if (wantsFull) {
-    const response = await fetch('/api/diagnostics/full');
+    const response = await apiFetch('/api/diagnostics/full');
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.ok) {
       throw new Error(result?.error || response.statusText || 'Diagnostics failed.');
@@ -139,7 +140,7 @@ export async function runDiagnosticsCommand(command: string): Promise<string> {
   const action = wantsConnections ? 'active-connections' : wantsNetwork ? 'network-diagnostics' : '';
   if (!action) return '';
 
-  const response = await fetch('/api/kali/run', {
+  const response = await apiFetch('/api/kali/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action }),

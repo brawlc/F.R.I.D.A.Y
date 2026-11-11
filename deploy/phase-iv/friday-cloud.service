@@ -1,0 +1,29 @@
+[Unit]
+Description=FRIDAY private cloud core
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=friday
+Group=friday
+WorkingDirectory=/opt/friday
+EnvironmentFile=/etc/friday/cloud.env
+ExecStart=/usr/bin/node backend/distributed/server.mjs
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/friday
+StateDirectory=friday
+MemoryMax=768M
+CPUQuota=100%
+TasksMax=64
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

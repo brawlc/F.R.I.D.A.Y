@@ -1,0 +1,12 @@
+# Self-hosted ntfy TEMPLATE: bind privately, set real Serve HTTPS URL before use.
+base-url: "<PRIVATE_NTFY_HTTPS_ORIGIN>"
+listen-http: "127.0.0.1:2586"
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+cache-file: "/var/lib/ntfy/cache.db"
+cache-duration: "12h"
+behind-proxy: true
+# Required for prompt iOS delivery with the stock ntfy app; forwards poll metadata.
+upstream-base-url: "https://ntfy.sh"
+enable-signup: false
+# Do not enable attachments: report downloads stay behind FRIDAY authentication.

@@ -1,6 +1,7 @@
+import { apiFetch } from './apiClient';
 // Temporary audio only: no persistent cache or saved speech history.
 export async function playOnlineVoice(text: string, rate: number, pitch: number, signal: AbortSignal) {
-  const response = await fetch('/api/voice/synthesize', {
+  const response = await apiFetch('/api/voice/synthesize', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, rate, pitch }), signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]),
   });

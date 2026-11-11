@@ -15,7 +15,7 @@ import { get } from 'node:http';
 const id = '12345678-1234-1234-1234-123456789abc';
 
 const fixture = () => ({ id, objective: 'Synthetic wing geometry review', createdAt: '2026-11-05T10:00:00Z', status: 'insufficient-evidence', conditions: 'Public literature only.', questions: [{ question: 'Which evidence is available?', verification: 'Exact supporting passages.' }], findings: [], hypotheses: [{ idea: 'A possible geometry', prediction: 'Compare drag', test: 'Matched-condition comparison', falsification: 'No benefit', sourceIds: ['S1'] }], contradictions: [], uncertainties: ['No validated measurements.'], experiments: [{ description: 'Proposed controlled comparison', status: 'approval-required' }], retrievalErrors: [{ provider: 'fixture', error: 'offline' }], sources: [{ id: 'S1', title: 'Synthetic test source - not a real paper', authors: ['Fixture Author'], url: 'https://example.org/source', published: '2026-01-01', kind: 'abstract', provenance: ['fixture'], reliability: { level: 'unvalidated' } }], usage: { modelCalls: 2, maxModelCalls: 5, outputTokensReserved: 2400 } });
-const config = { ntfy: { enabled: true, url: 'https://ntfy.sh', topic: 'synthetic-fixture' }, telegram: { enabled: false } };
+const config = { ntfy: { enabled: true, token: 'fixture-token', accessControlled: true, url: 'https://ntfy.sh', topic: 'synthetic-fixture', token: 'fixture-token', accessControlled: true }, telegram: { enabled: false } };
 
 test('PDF generator creates a bounded real document and password-free attachments', async () => {
   const bytes = await generateResearchPdf(fixture());
